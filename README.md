@@ -1,12 +1,12 @@
 # ProgressCrabs
 
-A Claude Code mod for long chats: a live progress band above the prompt and a panel of side sessions drawn as little Dracula-coloured crabs.
+A Claude Code mod for long chats: a live progress band above the prompt and a panel of side sessions drawn as little crabs. Dracula by default, with ten more themes.
 
 ![Side sessions panel](docs/panel.png)
 
 ## What it shows
 
-- **Progress bar**: the chat's task list as a full-width pill. Purple = done, pink = in progress, orange = up next, slate = the rest.
+- **Progress bar**: the chat's task list as a full-width pill. In Dracula: purple = done, pink = in progress, orange = up next, slate = the rest.
 - **Working row**: what Claude is doing right now and for how long: `thinking · 42s`, `running Bash · 1m`, `writing · 2m`. Shows in any chat, task list or not.
 - **Steps and time**: `done/total`, the current step, how long it has run and `~Nm left (rough)` from the average finished step.
 - **Side sessions**: each session started from this chat, by title, with its state.
@@ -15,6 +15,12 @@ A Claude Code mod for long chats: a live progress band above the prompt and a pa
 Works on the desktop app (drawn as SVG) and in the terminal (block characters). Animation stops under reduced-motion settings.
 
 ## Install
+
+```
+/plugin install progress-crabs --marketplace gkuba/ProgressCrabs
+```
+
+Or in two steps:
 
 ```
 /plugin marketplace add gkuba/ProgressCrabs
@@ -31,8 +37,41 @@ claude plugin install progress-crabs@progress-crabs
 ## Use
 
 - `/progress` hides or shows the band for the session.
+- `/progress theme [name]` lists or switches colour themes (see Themes).
 - `/crabs` shows or hides the side sessions panel (it opens by itself the first time a side session appears).
 - Turn it off: `claude plugin disable progress-crabs@progress-crabs`. Remove it: `claude plugin uninstall progress-crabs@progress-crabs`.
+
+## Themes
+
+`dracula` (default), `tokyo-night`, `nord`, `github`, `github-light`, `gruvbox`, `one-dark`, `catppuccin-latte`, `catppuccin-frappe`, `catppuccin-macchiato`, `catppuccin-mocha`.
+
+- `/progress theme` lists them and marks the current one.
+- `/progress theme <name>` switches straight away. The choice is saved and carries into new chats.
+- `/progress theme default` goes back to the theme in your settings.
+
+### Settings
+
+Set a **Theme** and four optional hex colours laid over it, **Done**, **Current**, **Next** and **Crab** (leave one blank to keep the theme's colour), in `/config`, on the install screen, or with:
+
+```
+/plugin configure progress-crabs@progress-crabs
+```
+
+From a shell, `claude plugin configure progress-crabs@progress-crabs` shows what is set, and this sets values:
+
+```bash
+echo '{"theme":"nord","done_color":"#88c0d0","crab_color":"#d08770"}' | claude plugin configure progress-crabs@progress-crabs --values-stdin
+```
+
+They are stored in `~/.claude/settings.json` under `pluginConfigs`.
+
+A theme picked with `/progress theme` wins over the settings' theme; the hex colours apply on top of either.
+
+### Edit or add a theme
+
+The palettes are in [`plugins/progress-crabs/hooks/themes.ts`](plugins/progress-crabs/hooks/themes.ts), one entry per theme; the comment at the top says which part of the band each colour paints. In a clone installed as a local marketplace (see Install), edit that file or add an entry, then run `/reload-plugins` or start a new chat. A new entry shows up in `/progress theme` at once; add its name to the `theme` options in `plugins/progress-crabs/.claude-plugin/plugin.json` to put it in the settings picker too.
+
+## Notes
 
 The task list and side sessions come from the Claude desktop app's task-list and linked-session tools; in a plain terminal session the band shows the working row only.
 

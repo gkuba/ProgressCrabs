@@ -2,7 +2,9 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
 import type { Activity, Side, Step } from '../types'
-import { CARD_H, D, MOOD, cardSvg, moodOf } from './crabs'
+import { CARD_H, MOOD, cardSvg, moodColor, moodOf } from './crabs'
+import { DEFAULT_THEME, THEMES, isTheme, paletteOf } from './themes'
+import type { Overrides, Palette } from './themes'
 
 // Change a tag when that value's fields change: it declines what an earlier
 // version stored, which outlives a reload.
@@ -11,6 +13,8 @@ const sides = atom({ plugin: 'progress-crabs', key: 'sides' } as const, [], { sh
 const activity = atom({ plugin: 'progress-crabs', key: 'activity' } as const, null as Activity | null, { shape: 'activity-1' })
 const isHidden = atom({ plugin: 'progress-crabs', key: 'isHidden' } as const, false)
 // Ticks while a step runs, so the elapsed time redraws on its own.
+// The theme `/progress theme` picked; null falls back to the settings' theme.
+const themeName = atom({ plugin: 'progress-crabs', key: 'theme' } as const, null as string | null)
 const clockNow = atom({ plugin: 'progress-crabs', key: 'now' } as const, 0)
 const TICK_MS = 5_000
 
@@ -104,25 +108,25 @@ const textOf = (content: unknown): string => {
 // A full-width pill: solid purple for finished steps, pink for the running one,
 // orange for the one up next, the rest an empty track. Percent lengths let the
 // frame's own width decide the size.
-const pillSvg = (height: number, total: number, done: number, running: number, upNext: number) => {
+const pillSvg = (P: Palette, height: number, total: number, done: number, running: number, upNext: number) => {
   const r = height / 2
   const pct = (n: number) => `${((n / total) * 100).toFixed(2)}%`
   const seg = (n: number, fill: string) =>
     n > 0 ? `<rect x="0" y="0" width="${pct(n)}" height="${height}" rx="${r}" fill="${fill}"/>` : ''
 
   return `<svg xmlns="http://www.w3.org/2000/svg" width="100%" height="${height}">
-<rect x="0" y="0" width="100%" height="${height}" rx="${r}" fill="${D.comment}" fill-opacity="0.3"/>
-${seg(done + running + upNext, D.orange)}
-${seg(done + running, D.pink)}
-${seg(done, D.purple)}
+<rect x="0" y="0" width="100%" height="${height}" rx="${r}" fill="${P.comment}" fill-opacity="0.3"/>
+${seg(done + running + upNext, P.orange)}
+${seg(done + running, P.pink)}
+${seg(done, P.purple)}
 </svg>`
 }
 
 
 const ACTIVITY = {
-  thinking: { label: 'thinking', color: D.pink },
-  writing: { label: 'writing', color: D.purple },
-  tool: { label: 'running', color: D.orange },
+  thinking: { label: 'thinking', role: 'pink' },
+  writing: { label: 'writing', role: 'purple' },
+  tool: { label: 'running', role: 'orange' },
 } as const
 
 // `mcp__server__tool` reads as `tool`.
@@ -137,7 +141,7 @@ async function setMode($: EngineInterface, mode: Activity['mode'], tool?: string
   )
 }
 
-const sideColor = (state: string) => MOOD[moodOf(state)].color
+const sideColor = (P: Palette, state: string) => moodColor(P, moodOf(state))
 
 const PANE = 'linked-sessions'
 const LIST_TOOL = 'mcp__ccd_session_mgmt__list_sessions'
@@ -202,16 +206,37 @@ async function togglePane($: EngineInterface) {
   return true
 }
 
-export const register: Register = on => {
+// The colours to draw with: the picked theme, else the settings' one, with the settings' overrides on top.
+async function paletteNow($: EngineInterface, fallback: string, over: Overrides) {
+  return paletteOf((await read($, themeName)) ?? fallback, over)
+}
+
+const themeList = (current: string) =>
+  Object.keys(THEMES)
+    .map(name => `${name === current ? '▸' : ' '} ${name}`)
+    .join('\n')
+
+export const register: Register = (on, options) => {
+  const fromSettings = isTheme(options.theme) ? options.theme : DEFAULT_THEME
+  const over: Overrides = {
+    done: String(options.done_color ?? ''),
+    current: String(options.current_color ?? ''),
+    next: String(options.next_color ?? ''),
+    crab: String(options.crab_color ?? ''),
+  }
+
   on('session.start', async ($, e, next) => {
     await $.command.register({
       name: 'progress',
-      description: 'Show or hide the task progress band above the prompt',
+      description: 'Show or hide the task progress band; `theme` lists or switches colour themes',
+      argumentHint: '[theme [name|default]]',
     })
     await $.command.register({
       name: 'crabs',
       description: 'Show or hide the side sessions panel',
     })
+    const saved = await $.store.get('theme').catch(() => undefined)
+    if (isTheme(saved)) await update($, themeName, () => saved)
     const startedAt = await $.clock.now()
     await update($, clockNow, () => startedAt)
     $.clock.every(TICK_MS, async () => {
@@ -230,7 +255,23 @@ export const register: Register = on => {
     return next(e)
   })
 
-  on('command.run', { command: 'progress' }, async $ => {
+  on('command.run', { command: 'progress' }, async ($, e) => {
+    const [verb, name] = e.args.trim().toLowerCase().split(/\s+/)
+    if (verb === 'theme' || verb === 'themes') {
+      if (!name) {
+        const current = (await read($, themeName)) ?? fromSettings
+        return { text: `Themes (▸ current):\n${themeList(current)}\n\n/progress theme <name> to switch, /progress theme default for the settings' theme.` }
+      }
+      if (name === 'default' || name === 'reset') {
+        await $.store.delete('theme')
+        await update($, themeName, () => null)
+        return { text: `Theme back to the settings' theme: ${fromSettings}.` }
+      }
+      if (!isTheme(name)) return { text: `No theme "${name}". Themes:\n${themeList('')}` }
+      await $.store.set('theme', name)
+      await update($, themeName, () => name)
+      return { text: `Theme: ${name}.` }
+    }
     const hidden = await update($, isHidden, was => !was)
 
     return { text: hidden ? 'Task progress band hidden. Run /progress to show it again.' : 'Task progress band shown.' }
@@ -355,6 +396,7 @@ export const register: Register = on => {
       return next(e)
     }
 
+    const P = await paletteNow($, fromSettings, over)
     const ui = $.ui.resolve(e)
     const { Box, Text } = ui
     const Svg = e.surface === 'desktop' && 'Svg' in ui ? ui.Svg : undefined
@@ -388,26 +430,26 @@ export const register: Register = on => {
       <Box flexDirection="column" rowGap={0}>
         {total > 0 &&
           (Svg ? (
-            <Svg alt={`${done} of ${total} steps done`} height={10} source={pillSvg(10, total, done, running, upNext)} />
+            <Svg alt={`${done} of ${total} steps done`} height={10} source={pillSvg(P, 10, total, done, running, upNext)} />
           ) : (
             <Box flexDirection="row">
-              <Text mono color={D.purple}>{'█'.repeat(doneCells)}</Text>
-              <Text mono color={D.pink}>{'█'.repeat(runCells)}</Text>
-              <Text mono color={D.orange}>{'█'.repeat(nextCells)}</Text>
-              <Text mono color={D.comment}>{'░'.repeat(restCells)}</Text>
+              <Text mono color={P.purple}>{'█'.repeat(doneCells)}</Text>
+              <Text mono color={P.pink}>{'█'.repeat(runCells)}</Text>
+              <Text mono color={P.orange}>{'█'.repeat(nextCells)}</Text>
+              <Text mono color={P.comment}>{'░'.repeat(restCells)}</Text>
             </Box>
           ))}
         {(working || linked.length > 0) && (
           <Box flexDirection="row" flexWrap="wrap" columnGap={2}>
             {working && look && (
               <Box flexDirection="row">
-                <Text color={look.color}>● </Text>
+                <Text color={P[look.role]}>● </Text>
                 <Text wrap="truncate-end">{working}</Text>
               </Box>
             )}
             {linked.map(side => (
               <Box key={side.id} flexDirection="row">
-                <Text color={sideColor(side.state)}>● </Text>
+                <Text color={sideColor(P, side.state)}>● </Text>
                 <Text>{side.title ?? side.name} </Text>
                 <Text dimColor>{side.state}</Text>
               </Box>
@@ -416,7 +458,7 @@ export const register: Register = on => {
         )}
         {total > 0 ? (
           <Box flexDirection="row">
-            <Text bold tabular color={isFinished ? D.green : D.purple}>{done}/{total} </Text>
+            <Text bold tabular color={isFinished ? P.green : P.purple}>{done}/{total} </Text>
             <Text wrap="truncate-end" dimColor={isFinished}>
               {isFinished ? '✓ all steps done' : current ? `▸ ${current.content}` : `${total - done} pending`}
             </Text>
@@ -436,6 +478,7 @@ export const register: Register = on => {
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
     const ui = $.ui.resolve(e)
     const { Box, Text, Button } = ui
+    const P = await paletteNow($, fromSettings, over)
     const linked = await read($, sides)
     const now = await read($, clockNow)
     const open = (id: string) => () =>
@@ -464,7 +507,7 @@ export const register: Register = on => {
                 alt={`${card.title}: ${MOOD[card.mood].label}${card.step ? `, ${card.step}` : ''}`}
                 width={W}
                 height={CARD_H}
-                source={cardSvg(W, card)}
+                source={cardSvg(P, W, card)}
               />
               <Button key={`open-${side.id}`} plain label={`Open ${card.title} ↗`} onPress={open(side.id)} />
             </Box>
@@ -478,7 +521,7 @@ export const register: Register = on => {
         {cards.map(({ side, card }) => (
           <Box key={side.id} flexDirection="column">
             <Button key={`open-${side.id}`} plain onPress={open(side.id)}>
-              <Text color={MOOD[card.mood].color}>🦀 </Text>
+              <Text color={moodColor(P, card.mood)}>🦀 </Text>
               {card.title}
               <Text dimColor> {[MOOD[card.mood].label, card.elapsed].filter(Boolean).join(' · ')}</Text>
             </Button>

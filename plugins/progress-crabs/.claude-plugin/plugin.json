@@ -1,7 +1,7 @@
 {
   "name": "progress-crabs",
-  "version": "0.2.0",
-  "description": "Band above the prompt with a live Dracula progress bar of the chat's task list and what Claude is doing, plus a side-sessions panel with animated crabs.",
+  "version": "0.3.0",
+  "description": "Band above the prompt with a live progress bar of the chat's task list and what Claude is doing, plus a side-sessions panel with animated crabs. Themeable: Dracula, Tokyo Night, Nord, GitHub, Gruvbox, One Dark, Catppuccin.",
   "license": "MIT",
   "types": "./types/index.d.ts",
   "author": {
@@ -9,5 +9,50 @@
     "url": "https://github.com/gkuba"
   },
   "homepage": "https://github.com/gkuba/ProgressCrabs",
-  "repository": "https://github.com/gkuba/ProgressCrabs"
+  "repository": "https://github.com/gkuba/ProgressCrabs",
+  "userConfig": {
+    "theme": {
+      "type": "string",
+      "title": "Theme",
+      "description": "Colour theme for the band and crab cards. /progress theme <name> overrides it.",
+      "default": "dracula",
+      "options": [
+        "dracula",
+        "tokyo-night",
+        "nord",
+        "github",
+        "github-light",
+        "gruvbox",
+        "one-dark",
+        "catppuccin-latte",
+        "catppuccin-frappe",
+        "catppuccin-macchiato",
+        "catppuccin-mocha"
+      ]
+    },
+    "done_color": {
+      "type": "string",
+      "title": "Done colour",
+      "description": "Finished steps. Hex like #bd93f9; blank keeps the theme's colour.",
+      "default": ""
+    },
+    "current_color": {
+      "type": "string",
+      "title": "Current colour",
+      "description": "The running step and \"thinking\". Hex like #bd93f9; blank keeps the theme's colour.",
+      "default": ""
+    },
+    "next_color": {
+      "type": "string",
+      "title": "Next colour",
+      "description": "The step up next and \"running\". Hex like #bd93f9; blank keeps the theme's colour.",
+      "default": ""
+    },
+    "crab_color": {
+      "type": "string",
+      "title": "Crab colour",
+      "description": "The crabs' shells. Hex like #bd93f9; blank keeps the theme's colour.",
+      "default": ""
+    }
+  }
 }

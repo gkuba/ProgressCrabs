@@ -13,6 +13,7 @@ declare module 'claude-code' {
   interface PluginState {
     'progress-crabs': {
       steps: Shaped<Step[]>
+      theme: string | null
       sides: Shaped<Side[]>
       activity: Shaped<Activity | null>
       now: number
