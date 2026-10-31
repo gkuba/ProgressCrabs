@@ -415,7 +415,7 @@ export const register: Register = on => {
           </Box>
         )}
         {total > 0 ? (
-          <Box flexDirection="row" justifyContent="flex-end">
+          <Box flexDirection="row">
             <Text bold tabular color={isFinished ? D.green : D.purple}>{done}/{total} </Text>
             <Text wrap="truncate-end" dimColor={isFinished}>
               {isFinished ? '✓ all steps done' : current ? `▸ ${current.content}` : `${total - done} pending`}

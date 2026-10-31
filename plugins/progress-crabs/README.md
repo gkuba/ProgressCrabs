@@ -2,7 +2,7 @@
 
 A compact band above the prompt that shows where a long chat stands:
 
-- **Task bar**: the chat's task list as a full-width Dracula pill on its own row (purple = done, pink = in progress, orange = up next, slate = rest; block characters in a terminal), `done/total`, the current step and its times, right-aligned on the row below.
+- **Task bar**: the chat's task list as a full-width Dracula pill on its own row (purple = done, pink = in progress, orange = up next, slate = rest; block characters in a terminal), `done/total`, the current step and its times, on the row below.
 - **Working**: while Claude works, a dot and what it is doing with the turn's time so far: `thinking · 42s` (pink), `running Bash · 1m` (orange), `writing · 2m` (purple). Shows in any chat, task list or not.
 - **Time**: how long the current step has run, and `~Nm left (rough)`: the average time of the finished steps times what is left. Shown once a step has finished; redraws every 5 seconds.
 - **Sessions**: each linked side session with a coloured dot and its state (working, idle, waiting...), read from the app's "Linked sessions now" note.
