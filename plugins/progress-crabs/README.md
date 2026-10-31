@@ -17,4 +17,4 @@ A pane with one card per side session started from this chat: a pixel crab, the 
 
 - `/progress` hides or shows the band for the session.
 - The band's own `[-]` (or ctrl+x ctrl+a) collapses it.
-- To turn it off everywhere: `claude plugin disable progress-crabs@local-mods`; to remove it: `claude plugin uninstall progress-crabs@local-mods`.
+- To turn it off everywhere: `claude plugin disable progress-crabs@progress-crabs`; to remove it: `claude plugin uninstall progress-crabs@progress-crabs`.

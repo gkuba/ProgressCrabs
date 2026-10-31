@@ -397,8 +397,8 @@ export const register: Register = on => {
               <Text mono color={D.comment}>{'░'.repeat(restCells)}</Text>
             </Box>
           ))}
-        <Box flexDirection="row" justifyContent="space-between" columnGap={2}>
-          <Box flexDirection="row" flexWrap="wrap" columnGap={2} flexShrink={1}>
+        {(working || linked.length > 0) && (
+          <Box flexDirection="row" flexWrap="wrap" columnGap={2}>
             {working && look && (
               <Box flexDirection="row">
                 <Text color={look.color}>● </Text>
@@ -413,22 +413,22 @@ export const register: Register = on => {
               </Box>
             ))}
           </Box>
-          {total > 0 ? (
-            <Box flexDirection="row" flexShrink={1}>
-              <Text bold tabular color={isFinished ? D.green : D.purple}>{done}/{total} </Text>
-              <Text wrap="truncate-end" dimColor={isFinished}>
-                {isFinished ? '✓ all steps done' : current ? `▸ ${current.content}` : `${total - done} pending`}
-              </Text>
-              {times.length > 0 && (
-                <Box flexShrink={0}>
-                  <Text dimColor> · {times.join(' · ')}</Text>
-                </Box>
-              )}
-            </Box>
-          ) : linked.length > 0 && !working ? (
-            <Text dimColor>No task list yet</Text>
-          ) : null}
-        </Box>
+        )}
+        {total > 0 ? (
+          <Box flexDirection="row" justifyContent="flex-end">
+            <Text bold tabular color={isFinished ? D.green : D.purple}>{done}/{total} </Text>
+            <Text wrap="truncate-end" dimColor={isFinished}>
+              {isFinished ? '✓ all steps done' : current ? `▸ ${current.content}` : `${total - done} pending`}
+            </Text>
+            {times.length > 0 && (
+              <Box flexShrink={0}>
+                <Text dimColor> · {times.join(' · ')}</Text>
+              </Box>
+            )}
+          </Box>
+        ) : linked.length > 0 && !working ? (
+          <Text dimColor>No task list yet</Text>
+        ) : null}
       </Box>
     )
   })
