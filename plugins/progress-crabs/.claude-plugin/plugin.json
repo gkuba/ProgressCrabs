@@ -1,0 +1,13 @@
+{
+  "name": "progress-crabs",
+  "version": "0.2.0",
+  "description": "Band above the prompt with a live Dracula progress bar of the chat's task list and what Claude is doing, plus a side-sessions panel with animated crabs.",
+  "license": "MIT",
+  "types": "./types/index.d.ts",
+  "author": {
+    "name": "Geramie Kuba",
+    "url": "https://github.com/gkuba"
+  },
+  "homepage": "https://github.com/gkuba/ProgressCrabs",
+  "repository": "https://github.com/gkuba/ProgressCrabs"
+}

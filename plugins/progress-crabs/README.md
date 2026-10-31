@@ -1,0 +1,20 @@
+# progress-crabs
+
+A compact band above the prompt that shows where a long chat stands:
+
+- **Task bar**: the chat's task list as a full-width Dracula pill on its own row (purple = done, pink = in progress, orange = up next, slate = rest; block characters in a terminal), `done/total`, the current step and its times, right-aligned on the row below.
+- **Working**: while Claude works, a dot and what it is doing with the turn's time so far: `thinking · 42s` (pink), `running Bash · 1m` (orange), `writing · 2m` (purple). Shows in any chat, task list or not.
+- **Time**: how long the current step has run, and `~Nm left (rough)`: the average time of the finished steps times what is left. Shown once a step has finished; redraws every 5 seconds.
+- **Sessions**: each linked side session with a coloured dot and its state (working, idle, waiting...), read from the app's "Linked sessions now" note.
+
+It reads the desktop app's task-list tool (`mcp__ccd_turn__update_plan` / `wrap_up`) as it runs, so it updates live. The Dracula colours sit on a semi-transparent track, so it reads in light and dark themes.
+
+## Side sessions panel
+
+A pane with one card per side session started from this chat: a pixel crab, the session's title, its state and how long it has been in it, and the first line of its latest answer. The crab walks while the session works, raises its claws with a pink `?` when it waits on you, shows a green check when done, and sits grey when idle (no motion under reduced-motion settings). A toast pops when a session finishes a turn or starts waiting. `Open … ↗` under a card switches to that session. It opens by itself the first time a side session appears; `/crabs` shows or hides it. Crab animation approach after savvy-progress (MIT); the sprite is this mod's own.
+
+## Toggle
+
+- `/progress` hides or shows the band for the session.
+- The band's own `[-]` (or ctrl+x ctrl+a) collapses it.
+- To turn it off everywhere: `claude plugin disable progress-crabs@local-mods`; to remove it: `claude plugin uninstall progress-crabs@local-mods`.

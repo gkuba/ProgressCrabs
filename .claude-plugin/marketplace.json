@@ -1,0 +1,14 @@
+{
+  "name": "progress-crabs",
+  "owner": { "name": "gkuba", "url": "https://github.com/gkuba" },
+  "metadata": { "description": "Claude Code mod: live task progress band and a side-sessions crab panel." },
+  "plugins": [
+    {
+      "name": "progress-crabs",
+      "source": "./plugins/progress-crabs",
+      "description": "Mod: Dracula progress band above the prompt (task list, what Claude is doing, rough time left) and a side-sessions panel with animated crabs.",
+      "version": "0.2.0",
+      "category": "mod"
+    }
+  ]
+}
