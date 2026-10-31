@@ -17,6 +17,7 @@ const isHidden = atom({ plugin: 'progress-crabs', key: 'isHidden' } as const, fa
 const themeName = atom({ plugin: 'progress-crabs', key: 'theme' } as const, null as string | null)
 const clockNow = atom({ plugin: 'progress-crabs', key: 'now' } as const, 0)
 const TICK_MS = 5_000
+const FAMILY_MS = 30_000
 
 const PLAN_TOOL = 'mcp__ccd_turn__update_plan'
 const WRAP_TOOL = 'mcp__ccd_turn__wrap_up'
@@ -170,18 +171,48 @@ const latestStep = (transcript: string): string | undefined => {
   return line?.replace(/\*\*|`/g, '').replace(/^[-*] /, '')
 }
 
-// Titles for every linked session, and the latest step of the ones named.
+type FamilyRow = { sessionId?: string; title?: string; name?: string; isRunning?: boolean; startedBy?: string }
+
+// The linked family as the app lists it: titles for every session, and the
+// sessions the "Linked sessions now" note leaves out (the one that started
+// this chat, and sessions further down), with their running state. Then the
+// latest step of the ones named, or of any whose state changed.
 async function refreshSides($: EngineInterface, stepsOf: string[]) {
-  const titles = new Map<string, string>()
+  let rows: FamilyRow[] = []
   try {
     const listed = await $.tool.call({ tool: LIST_TOOL, linked: true } as never)
-    const rows = JSON.parse(resultText('result' in listed ? listed.result : '') || '[]') as { sessionId?: string; title?: string }[]
-    for (const row of rows) if (row.sessionId && row.title) titles.set(row.sessionId, row.title)
+    rows = JSON.parse(resultText('result' in listed ? listed.result : '') || '[]') as FamilyRow[]
   } catch {
-    // The panel falls back to the short names.
+    // The panel falls back to the short names and the note's sessions.
   }
+  const now = await $.clock.now()
+  const before = await read($, sides)
+  const fromNote = before.filter(side => !side.isListed)
+  const listed: Side[] = rows
+    .filter(row => row.sessionId && !fromNote.some(side => side.id === row.sessionId))
+    .map(row => {
+      const id = row.sessionId as string
+      const was = before.find(side => side.id === id)
+      const state = row.isRunning ? 'working' : 'idle'
+
+      return {
+        ...was,
+        id,
+        name: row.name ?? 'parent',
+        title: row.title ?? was?.title,
+        state,
+        isListed: true,
+        isParent: !row.startedBy,
+        since: was && was.state === state ? was.since : now,
+      }
+    })
+  for (const side of listed) {
+    const was = before.find(b => b.id === side.id)
+    if (was && moodOf(was.state) === 'working' && side.state === 'idle') $.ui.toast(`🦀 ${side.title ?? side.name} finished a turn`)
+  }
+  const ask = [...stepsOf, ...listed.filter(side => before.find(b => b.id === side.id)?.state !== side.state).map(side => side.id)]
   const found = new Map<string, string>()
-  for (const id of stepsOf) {
+  for (const id of ask) {
     try {
       const events = await $.tool.call({ tool: EVENTS_TOOL, session_id: id, limit: 3 } as never)
       const step = latestStep(resultText('result' in events ? events.result : ''))
@@ -190,9 +221,15 @@ async function refreshSides($: EngineInterface, stepsOf: string[]) {
       // Left without a step.
     }
   }
-  await update($, sides, list =>
-    list.map(side => ({ ...side, title: titles.get(side.id) ?? side.title, step: found.get(side.id) ?? side.step })),
+  const titles = new Map(rows.filter(row => row.sessionId && row.title).map(row => [row.sessionId as string, row.title as string]))
+  const merged = await update($, sides, list =>
+    [...list.filter(side => !side.isListed), ...listed].map(side => ({
+      ...side,
+      title: titles.get(side.id) ?? side.title,
+      step: found.get(side.id) ?? side.step,
+    })),
   )
+  if (before.length === 0 && merged.length > 0) await $.ui.open({ id: PANE, title: 'Side sessions' })
 }
 
 async function togglePane($: EngineInterface) {
@@ -237,6 +274,12 @@ export const register: Register = (on, options) => {
     })
     const saved = await $.store.get('theme').catch(() => undefined)
     if (isTheme(saved)) await update($, themeName, () => saved)
+    // The family the note leaves out (this chat's parent above all) is read
+    // from the app's list: once now, then every 30 seconds while there is one.
+    void refreshSides($, []).catch(() => undefined)
+    $.clock.every(FAMILY_MS, async () => {
+      if ((await read($, sides)).length > 0) await refreshSides($, []).catch(() => undefined)
+    })
     const startedAt = await $.clock.now()
     await update($, clockNow, () => startedAt)
     $.clock.every(TICK_MS, async () => {
@@ -368,7 +411,7 @@ export const register: Register = (on, options) => {
 
           return { ...was, name: m[1], id: m[2], state, since: was && was.state === state ? was.since : now }
         })
-        await update($, sides, () => found)
+        await update($, sides, list => [...found, ...list.filter(side => side.isListed && !found.some(f => f.id === side.id))])
 
         // A toast when a session finishes a turn or starts waiting on the person.
         const changed = found.filter(side => before.find(b => b.id === side.id)?.state !== side.state)
@@ -488,7 +531,7 @@ export const register: Register = (on, options) => {
     const cards = linked.map(side => ({
       side,
       card: {
-        title: side.title ?? side.name,
+        title: `${side.isParent ? '↑ ' : ''}${side.title ?? side.name}`,
         mood: moodOf(side.state),
         step: side.step,
         elapsed: side.since !== undefined && now > side.since ? formatSpan(now - side.since) : undefined,

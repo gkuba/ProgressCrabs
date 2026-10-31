@@ -11,7 +11,7 @@ It reads the desktop app's task-list tool (`mcp__ccd_turn__update_plan` / `wrap_
 
 ## Side sessions panel
 
-A pane with one card per side session started from this chat: a pixel crab, the session's title, its state and how long it has been in it, and the first line of its latest answer. The crab walks while the session works, raises its claws with a pink `?` when it waits on you, shows a green check when done, and sits grey when idle (no motion under reduced-motion settings). A toast pops when a session finishes a turn or starts waiting. `Open … ↗` under a card switches to that session. It opens by itself the first time a side session appears; `/crabs` shows or hides it. Crab animation approach after savvy-progress (MIT); the sprite is this mod's own.
+A pane with one card per side session started from this chat: a pixel crab, the session's title, its state and how long it has been in it, and the first line of its latest answer. The crab walks while the session works, raises its claws with a pink `?` when it waits on you, shows a green check when done, and sits grey when idle (no motion under reduced-motion settings). A toast pops when a session finishes a turn or starts waiting. `Open … ↗` under a card switches to that session. In a side session the chat that started it gets a card too, marked `↑`, its state read from the app's session list every 30 seconds. It opens by itself the first time a side session appears; `/crabs` shows or hides it. Crab animation approach after savvy-progress (MIT); the sprite is this mod's own.
 
 ## Themes
 

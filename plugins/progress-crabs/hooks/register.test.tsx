@@ -190,3 +190,40 @@ test('the settings pick the theme and override single colours', { options: { the
   expect((await ui.find({ type: 'Text', text: /1\/2/ }))?.props?.color).toBe('#83a598')
   await ui.unmount()
 })
+
+test('a side session shows the session that started it, and its finish', async ($, on) => {
+  const clock = mock.clock(on)
+  mock.store(on)
+  const toasts: string[] = []
+  on('ui.toast', (_, e) => {
+    toasts.push(e.text)
+    return { value: undefined }
+  })
+  on('ui.open', () => ({ value: { isPlaced: true } }))
+  on('command.register', () => ({ value: { command: 'progress' } }))
+  on('session.start', (_, e) => ({ cwd: e.cwd }))
+  let isRunning = true
+  on('tool.call', (_, e) =>
+    e.tool === 'mcp__ccd_session_mgmt__list_sessions'
+      ? { result: [{ type: 'text', text: JSON.stringify([{ sessionId: 'local_b9c8', title: 'Fjord scene image refinement', isRunning }]) }] }
+      : { result: [{ type: 'text', text: '[assistant] Checking the crab.' }] },
+  )
+
+  await $.session.start({ cwd: '/', surface: 'desktop', isInteractive: true })
+  await new Promise(r => setTimeout(r, 20))
+  const ui = await $.ui.mount({
+    plugin: 'progress-crabs',
+    component: 'Pane',
+    requestId: 'linked-sessions',
+    surface: 'terminal',
+    props: { title: 'Side sessions', isFocused: false, bodyColumns: 60, placement: 'dock', scroll: { offset: 0, bodyRows: 20 }, view: {} },
+  } as never)
+  expect(await ui.find({ type: 'Button', text: /↑ Fjord scene image refinement/ })).toBeDefined()
+  expect((await ui.find({ type: 'Text', text: /working/ }))?.text).toContain('working')
+  await ui.unmount()
+
+  isRunning = false
+  await clock.advance(30_000)
+  await new Promise(r => setTimeout(r, 20))
+  expect(toasts.some(t => /Fjord scene image refinement finished a turn/.test(t))).toBe(true)
+})

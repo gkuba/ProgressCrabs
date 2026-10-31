@@ -4,8 +4,9 @@ export type Step = {
   startedAt?: number
   finishedAt?: number
 }
-// A linked side session: the app's state word, and what the panel adds to it.
-export type Side = { name: string; id: string; state: string; title?: string; step?: string; since?: number }
+// A linked session: the app's state word, and what the panel adds to it.
+// isListed: read from list_sessions, not the note; isParent: the session that started this chat.
+export type Side = { name: string; id: string; state: string; title?: string; step?: string; since?: number; isListed?: boolean; isParent?: boolean }
 // What the main loop is doing during a turn, and when the turn began.
 export type Activity = { mode: 'thinking' | 'writing' | 'tool'; tool?: string; since: number }
 

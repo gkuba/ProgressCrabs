@@ -10,7 +10,7 @@ A Claude Code mod for long chats: a live progress band above the prompt and a pa
 - **Working row**: what Claude is doing right now and for how long: `thinking · 42s`, `running Bash · 1m`, `writing · 2m`. Shows in any chat, task list or not.
 - **Steps and time**: `done/total`, the current step, how long it has run and `~Nm left (rough)` from the average finished step.
 - **Side sessions**: each session started from this chat, by title, with its state.
-- **Crab panel**: one card per side session. The crab walks while it works, raises its claws with a `?` when it waits on you, shows a check when done. A toast pops when one finishes a turn or starts waiting; `Open ↗` switches to it.
+- **Crab panel**: one card per side session, and in a side session one for the chat that started it (marked `↑`, read every 30 seconds). The crab walks while it works, raises its claws with a `?` when it waits on you, shows a check when done. A toast pops when one finishes a turn or starts waiting; `Open ↗` switches to it.
 
 Works on the desktop app (drawn as SVG) and in the terminal (block characters). Animation stops under reduced-motion settings.
 
