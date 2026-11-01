@@ -24,6 +24,8 @@ declare module 'claude-code' {
       needsAllow: boolean
       // Turns started since the task list last changed.
       planAge: number
+      // A turn was stopped with a step running.
+      isInterrupted: boolean
     }
   }
 }

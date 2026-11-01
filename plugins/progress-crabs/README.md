@@ -6,12 +6,16 @@
 
 A compact band above the prompt that shows where a long chat stands:
 
-- **Task bar**: the chat's task list as a full-width pill in the current theme on its own row (purple = done, pink = in progress, orange = up next, slate = rest; block characters in a terminal: `█` done, `▓` running, `▒` next, `░` rest), `done/total`, the current step and its times, on the row below. Short of rows or narrower than 40 cells, it folds into one row: a small bar, the count, a dot for Claude and `🦀N` for the side sessions (in the colour of the one that needs you most), then the step. A finished list turns green and says `✓ all steps done in 12m` until the next turn. A list no update touched for 3 turns dims and says `/progress clear hides it`.
+- **Task bar**: the chat's task list as a full-width pill in the current theme on its own row (purple = done, pink = in progress, orange = up next, slate = rest; block characters in a terminal: `█` done, `▓` running, `▒` next, `░` rest), `done/total`, the current step and its times, on the row below. Short of rows or narrower than 40 cells, it folds into one row: a small bar, the count, a dot for Claude and `🦀N` for the side sessions (in the colour of the one that needs you most), then the step. A finished list flashes once, turns green and says `✓ all steps done in 12m` until the next turn. A turn stopped mid-step marks it `⏸ … · interrupted` until the next update. A list no update touched for 3 turns dims and says `/progress clear hides it`.
 - **Working**: while Claude works, a dot and what it is doing with the turn's time so far: `thinking · 42s` (pink), `running Bash · 1m` (orange), `writing · 2m` (purple). Shows in any chat, task list or not.
 - **Time**: how long the current step has run, and `~Nm left`: the finished steps' times, the latest weighing most, times what is left. Shown once two steps have finished, and hidden while their times vary too much to guess from; redraws every 5 seconds.
 - **Sessions**: each linked side session with a coloured dot and its state (working, idle, waiting...), read from the app's "Linked sessions now" note.
 
-It reads the desktop app's task-list tool (`mcp__ccd_turn__update_plan` / `wrap_up`) as it runs, so it updates live. The theme's colours sit on a semi-transparent track, so it reads in light and dark themes; on the light themes every colour keeps 3:1 contrast or better.
+It reads the desktop app's task-list tool (`mcp__ccd_turn__update_plan` / `wrap_up`) as it runs, so it updates live; after a restart or resume it rebuilds the list from the transcript's own calls. The theme's colours sit on a semi-transparent track, so it reads in light and dark themes; on the light themes every colour keeps 3:1 contrast or better.
+
+## Tasks pane
+
+`details ↗` on the band, or `/progress list`, opens a **Tasks** tab beside the other mods' panes: `done/total`, elapsed, `~left` and `interrupted` up top, then one bar per step in the theme's colours. Done steps are purple (all green once the list finishes), the next one orange, the rest an empty track. The running step cools like hot metal: an orange leading edge fading through pink to purple behind it, filling with its time against the usual step's; past that it holds at 90% with a pulsing hot edge, and before any estimate exists a pink stripe sweeps it. A step that finishes flashes green, then settles. Desktop draws SVG gradients; a terminal colours each cell.
 
 ## Side sessions panel
 
@@ -23,6 +27,6 @@ A pane with one card per side session started from this chat, sessions that need
 
 ## Toggle
 
-- `/progress` hides or shows the band for the session; `/progress show` / `/progress hide` set it; `/progress clear` drops a task list left behind (one not updated for 3 turns draws dimmed).
+- `/progress` hides or shows the band for the session; `/progress show` / `/progress hide` set it; `/progress list` opens or closes the Tasks pane; `/progress clear` drops a task list left behind (one not updated for 3 turns draws dimmed).
 - The band's own `[-]` (or ctrl+x ctrl+a) collapses it.
 - To turn it off everywhere: `claude plugin disable progress-crabs@progress-crabs`; to remove it: `claude plugin uninstall progress-crabs@progress-crabs`.

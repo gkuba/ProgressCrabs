@@ -84,26 +84,32 @@ const RECENT_WEIGHT = 0.4
 const MAX_SPREAD = 1
 const SPREAD_OF = 4
 
-// Elapsed time of the running step, and an estimate of what is left from the
-// steps that ran for a measured time, the latest weighing most. No estimate
-// until two steps were timed, nor while their times spread too wide to guess from.
-export const timing = (list: Step[], now: number) => {
-  const current = list.find(step => step.status === 'in_progress')
-  const elapsed = current?.startedAt !== undefined ? Math.max(0, now - current.startedAt) : null
+// The usual length of a step, from the steps that ran for a measured time, the
+// latest weighing most. None until two steps were timed, nor while their
+// times spread too wide to guess from.
+export const stepEstimate = (list: Step[]) => {
   const spans = list
     .filter(step => step.status === 'completed' && step.startedAt !== undefined && step.finishedAt !== undefined)
     .sort((a, b) => (a.finishedAt as number) - (b.finishedAt as number))
     .map(step => (step.finishedAt as number) - (step.startedAt as number))
     .filter(span => span > 1000)
   const [first, ...later] = spans
-  if (first === undefined || later.length === 0) return { elapsed, left: null }
+  if (first === undefined || later.length === 0) return null
   // The spread of the latest few, so one slow step early on stops counting.
   const recent = spans.slice(-SPREAD_OF)
   const mean = recent.reduce((sum, span) => sum + span, 0) / recent.length
   const spread = Math.sqrt(recent.reduce((sum, span) => sum + (span - mean) ** 2, 0) / recent.length)
-  if (spread > MAX_SPREAD * mean) return { elapsed, left: null }
+  if (spread > MAX_SPREAD * mean) return null
 
-  const average = later.reduce((avg, span) => RECENT_WEIGHT * span + (1 - RECENT_WEIGHT) * avg, first)
+  return later.reduce((avg, span) => RECENT_WEIGHT * span + (1 - RECENT_WEIGHT) * avg, first)
+}
+
+// Elapsed time of the running step, and an estimate of what is left.
+export const timing = (list: Step[], now: number) => {
+  const current = list.find(step => step.status === 'in_progress')
+  const elapsed = current?.startedAt !== undefined ? Math.max(0, now - current.startedAt) : null
+  const average = stepEstimate(list)
+  if (average === null) return { elapsed, left: null }
   const pending = list.filter(step => step.status === 'pending').length
   const left = pending * average + (current ? Math.max(0, average - (elapsed ?? 0)) : 0)
 
@@ -129,4 +135,26 @@ export const barCells = (cells: number, total: number, done: number, running: nu
   const c = Math.min(cells, Math.max(b + (upNext ? 1 : 0), at(done + running + upNext)))
 
   return { done: a, run: b - a, next: c - b, rest: cells - c }
+}
+
+type Recorded = { role: string; text: string; toolUses?: { tool: string; input: Record<string, unknown>; isError?: true }[]; toolResults?: unknown[] }
+
+// The list rebuilt from the transcript's own task-list and wrap-up calls, for
+// a session the mod joined late (a restart, a resume). A list finished in an
+// earlier turn gives way at the next prompt, as it does live. The replayed
+// steps carry no times: only the running one starts its clock now.
+export const replay = (messages: Recorded[], now: number, plan: string, wrap: string): Step[] => {
+  let list: Step[] = []
+  for (const message of messages) {
+    if (message.role === 'user' && message.text.trim() !== '' && !message.toolResults?.length) {
+      if (list.length > 0 && list.every(step => step.status === 'completed')) list = []
+    }
+    for (const use of message.toolUses ?? []) {
+      if (use.isError) continue
+      if (use.tool === plan) list = applyPlan(list, use.input as PlanArgs, now)
+      else if (use.tool === wrap) list = completeAll(list, now)
+    }
+  }
+
+  return list.map(step => (step.status === 'in_progress' ? { content: step.content, status: step.status, startedAt: now } : { content: step.content, status: step.status }))
 }

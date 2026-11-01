@@ -70,6 +70,12 @@ test('a finished list goes green and says how long it took', async ($, on) => {
   await clock.advance(7 * 60_000)
   await $.tool.call({ tool: PLAN, advance: true } as never)
 
+  // It flashes bright once, then stays green.
+  const flash = await band($)
+  expect((await flash.find({ type: 'Text', text: /█/ }))?.props?.color).toBe(THEMES.dracula.fg)
+  await flash.unmount()
+  await clock.advance(2_000)
+
   const ui = await band($)
   const done = await ui.find({ type: 'Text', text: /✓/ })
   expect(done?.text).toBe('✓ all steps done in 12m')

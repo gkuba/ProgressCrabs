@@ -3,10 +3,11 @@ import type { EngineInterface, Register, RenderElement } from 'claude-code'
 
 import type { Activity, Side, Step } from '../types'
 import { CARD_H, MOOD, byUrgency, cardSvg, moodColor, moodOf } from './crabs'
-import { applyPlan, barCells, completeAll, formatSpan, listSpan, timing } from './plan'
+import { applyPlan, barCells, completeAll, formatSpan, listSpan, replay, stepEstimate, timing } from './plan'
 import type { PlanArgs } from './plan'
 import { idleSince, latestStep, parentOf, parseLinked, resultText, textOf } from './sides'
 import type { FamilyRow } from './sides'
+import { BAR_H, FLASH_MS, runsOf, stepBars, stepCells, stepSvg } from './tasks'
 import { DEFAULT_THEME, THEMES, isTheme, paletteOf } from './themes'
 import type { Overrides, Palette } from './themes'
 
@@ -30,6 +31,9 @@ const needsAllow = atom({ plugin: 'progress-crabs', key: 'needsAllow' } as const
 // Turns started since the task list last changed; an old list draws dimmed.
 const planAge = atom({ plugin: 'progress-crabs', key: 'planAge' } as const, 0)
 const STALE_TURNS = 3
+// Set when a turn is stopped with a step still running and no wrap-up; the next
+// task-list update clears it.
+const isInterrupted = atom({ plugin: 'progress-crabs', key: 'isInterrupted' } as const, false)
 const TICK_MS = 5_000
 // The family is read this often while one of it works, and less often while all sit idle.
 const FAMILY_FAST_MS = 10_000
@@ -43,18 +47,22 @@ const WRAP_TOOL = 'mcp__ccd_turn__wrap_up'
 // A full-width pill: solid purple for finished steps, pink for the running one,
 // orange for the one up next, the rest an empty track. Percent lengths let the
 // frame's own width decide the size.
-const pillSvg = (P: Palette, height: number, total: number, done: number, running: number, upNext: number) => {
+// `isFlash`: the list just finished, so the done fill blinks bright once and settles green.
+const pillSvg = (P: Palette, height: number, total: number, done: number, running: number, upNext: number, isFlash = false) => {
   const doneFill = done === total ? P.green : P.purple
   const r = height / 2
   const pct = (n: number) => `${((n / total) * 100).toFixed(2)}%`
-  const seg = (n: number, fill: string) =>
-    n > 0 ? `<rect x="0" y="0" width="${pct(n)}" height="${height}" rx="${r}" fill="${fill}"/>` : ''
+  const seg = (n: number, fill: string, cls = '') =>
+    n > 0 ? `<rect${cls ? ` class="${cls}"` : ''} x="0" y="0" width="${pct(n)}" height="${height}" rx="${r}" fill="${fill}"/>` : ''
+  const flash = isFlash
+    ? `<style>@keyframes f{0%{fill:${P.purple}}35%{fill:${P.fg}}100%{fill:${P.green}}}.f{animation:f ${FLASH_MS}ms ease-out forwards}@media (prefers-reduced-motion: reduce){.f{animation:none}}</style>`
+    : ''
 
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="100%" height="${height}">
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="100%" height="${height}">${flash}
 <rect x="0" y="0" width="100%" height="${height}" rx="${r}" fill="${P.comment}" fill-opacity="0.3"/>
 ${seg(done + running + upNext, P.orange)}
 ${seg(done + running, P.pink)}
-${seg(done, doneFill)}
+${seg(done, doneFill, isFlash ? 'f' : '')}
 </svg>`
 }
 
@@ -139,6 +147,37 @@ async function setTheme($: EngineInterface, name: string | null) {
 }
 
 const THEME_PANE = 'themes'
+// The task list one bar per step, a tab beside the other mods' panes.
+const TASK_PANE = 'task-list'
+
+async function toggleTasks($: EngineInterface) {
+  if ((await $.ui.panes()).some(pane => pane.id === TASK_PANE)) {
+    await $.ui.close({ id: TASK_PANE })
+
+    return false
+  }
+  await $.ui.open({ id: TASK_PANE, title: 'Tasks' })
+
+  return true
+}
+
+// The list the transcript's own calls built, once per conversation, for a
+// session joined late (a restart, a resume) whose list the atoms lost.
+let isRebuilt = false
+async function rebuild($: EngineInterface) {
+  if (isRebuilt) return
+  isRebuilt = true
+  if ((await read($, steps)).length > 0) return
+  const now = await $.clock.now()
+  const found = replay(await Promise.resolve().then(() => $.session.messages()).catch(() => []), now, PLAN_TOOL, WRAP_TOOL)
+  if (found.length > 0) await update($, steps, was => (was.length === 0 ? found : was))
+}
+
+// A finished step flashes green for a moment; one redraw after puts it back.
+const redrawAfterFlash = ($: EngineInterface) =>
+  $.clock.after(FLASH_MS + 100, () => {
+    void $.clock.now().then(now => update($, clockNow, () => now)).catch(() => undefined)
+  })
 
 const themeList = (current: string) =>
   Object.keys(THEMES)
@@ -255,6 +294,7 @@ async function drainFamily($: EngineInterface) {
 const USAGE = [
   '/progress            show or hide the band',
   '/progress show|hide  show or hide it',
+  '/progress list       open or close the Tasks pane',
   '/progress clear      drop the task list',
   '/progress theme      list the colour themes',
   '/progress theme <name>|default',
@@ -273,7 +313,7 @@ export const register: Register = (on, options) => {
     await $.command.register({
       name: 'progress',
       description: 'Show or hide the task progress band; `theme` lists or switches colour themes',
-      argumentHint: '[show|hide|clear|theme [name|default]]',
+      argumentHint: '[show|hide|list|clear|theme [name|default]]',
     })
     await $.command.register({
       name: 'crabs',
@@ -297,6 +337,7 @@ export const register: Register = (on, options) => {
     })
     const startedAt = await $.clock.now()
     await update($, clockNow, () => startedAt)
+    await rebuild($).catch(() => undefined)
     $.clock.every(TICK_MS, async () => {
       const list = await read($, steps)
       const linked = await read($, sides)
@@ -304,7 +345,7 @@ export const register: Register = (on, options) => {
       const was = await read($, clockNow)
       const isBusy =
         (await read($, activity)) !== null ||
-        list.some(step => step.status === 'in_progress') ||
+        (list.some(step => step.status === 'in_progress') && !(await read($, isInterrupted))) ||
         linked.some(side => moodOf(side.state) === 'working')
       const isNewMinute = linked.length > 0 && Math.floor(now / 60_000) !== Math.floor(was / 60_000)
       if (isBusy || isNewMinute) await update($, clockNow, () => now)
@@ -316,9 +357,11 @@ export const register: Register = (on, options) => {
   // A /clear starts a new conversation in the same process: its task list and
   // family are not this one's.
   on('session.end', async ($, e, next) => {
-    if (e.reason === 'clear') {
+    if (e.reason === 'clear' || e.reason === 'resume') {
       await update($, steps, () => [])
       await update($, planAge, () => 0)
+      await update($, isInterrupted, () => false)
+      isRebuilt = false
       await update($, sides, () => [])
       await update($, activity, () => null)
       resetFamily()
@@ -344,9 +387,14 @@ export const register: Register = (on, options) => {
       await setTheme($, name)
       return { text: `Theme: ${name}. Changing the theme in the settings replaces it.` }
     }
+    if (verb === 'list' || verb === 'tasks') {
+      const isOpen = await toggleTasks($).catch(() => null)
+      return { text: isOpen === null ? 'The Tasks pane cannot open here.' : isOpen ? 'Tasks pane open.' : 'Tasks pane closed.' }
+    }
     if (verb === 'clear') {
       await update($, steps, () => [])
       await update($, planAge, () => 0)
+      await update($, isInterrupted, () => false)
       return { text: 'Task list cleared from the band.' }
     }
     if (verb !== '' && !['show', 'on', 'hide', 'off'].includes(verb)) return { text: `Unknown "${verb}". Usage:\n${USAGE}` }
@@ -376,9 +424,13 @@ export const register: Register = (on, options) => {
     const ran = await next(e)
     if (!e.agentId && wentThrough(ran)) {
       const now = await $.clock.now()
-      await update($, steps, list => applyPlan(list, e as unknown as PlanArgs, now))
+      const was = await read($, steps)
+      const list = await update($, steps, before => applyPlan(before, e as unknown as PlanArgs, now))
       await update($, planAge, () => 0)
       await update($, clockNow, () => now)
+      await update($, isInterrupted, () => false)
+      const doneOf = (l: typeof list) => l.filter(step => step.status === 'completed').length
+      if (doneOf(list) > doneOf(was)) redrawAfterFlash($)
     }
 
     return ran
@@ -389,6 +441,8 @@ export const register: Register = (on, options) => {
     if (!e.agentId && wentThrough(ran)) {
       const now = await $.clock.now()
       await update($, steps, list => completeAll(list, now))
+      await update($, isInterrupted, () => false)
+      redrawAfterFlash($)
     }
 
     return ran
@@ -400,6 +454,7 @@ export const register: Register = (on, options) => {
       const now = await $.clock.now()
       await update($, activity, () => ({ mode: 'thinking', since: now }))
       await update($, clockNow, () => now)
+      await rebuild($).catch(() => undefined)
       // A list finished in an earlier turn makes way for the next one.
       const list = await update($, steps, was => (was.length > 0 && was.every(step => step.status === 'completed') ? [] : was))
       await update($, planAge, age => (list.length > 0 ? age + 1 : 0))
@@ -456,6 +511,11 @@ export const register: Register = (on, options) => {
   })
 
   on('turn.complete', async ($, e, next) => {
+    // Stopped mid-step with no wrap-up: the running step is marked. The flag is
+    // the input's, so it is read before the engine's end step runs.
+    if (!e.agentId && e.isAborted && (await read($, steps)).some(step => step.status === 'in_progress')) {
+      await update($, isInterrupted, () => true)
+    }
     const done = await next(e)
     if (!e.agentId) await update($, activity, () => null)
 
@@ -502,7 +562,8 @@ export const register: Register = (on, options) => {
 
     const P = await paletteNow($, fromSettings, over)
     const ui = $.ui.resolve(e)
-    const { Box, Text } = ui
+    const { Box, Text, Button } = ui
+    const isStopped = await read($, isInterrupted)
     // Another mod's band beneath ours (Simple Progress Bars, say) stacks above it, so
     // neither hides the other. The engine's own answer is left out: ours replaces it.
     const beneath = await next(e).catch(() => null)
@@ -523,6 +584,8 @@ export const register: Register = (on, options) => {
     const age = await read($, planAge)
     // A list no update has touched for a few turns was likely left behind.
     const isStale = !isFinished && age >= STALE_TURNS
+    const lastFinish = Math.max(0, ...list.map(step => step.finishedAt ?? 0))
+    const isFlash = isFinished && lastFinish > 0 && (await $.clock.now()) - lastFinish < FLASH_MS
 
     const upNext = running && done + running < total ? 1 : 0
     const clock = await read($, clockNow)
@@ -543,13 +606,13 @@ export const register: Register = (on, options) => {
     const countColor = isFinished ? P.green : isStale ? P.comment : P.purple
     const stepText = isFinished
       ? `✓ all steps done${took ? ` in ${formatSpan(took)}` : ''}`
-      : current ? `▸ ${current.content}` : total > 0 ? `${total - done} pending` : null
+      : current ? `${isStopped ? '⏸' : '▸'} ${current.content}` : total > 0 ? `${total - done} pending` : null
     const textBar = (cells: number) => {
       const bar = barCells(cells, total, done, running, upNext)
 
       return (
         <Box flexDirection="row" flexShrink={0}>
-          <Text mono color={doneColor}>{'█'.repeat(bar.done)}</Text>
+          <Text mono color={isFlash ? P.fg : doneColor}>{'█'.repeat(bar.done)}</Text>
           <Text mono color={P.pink}>{'▓'.repeat(bar.run)}</Text>
           <Text mono color={P.orange}>{'▒'.repeat(bar.next)}</Text>
           <Text mono color={P.comment}>{'░'.repeat(bar.rest)}</Text>
@@ -591,7 +654,7 @@ export const register: Register = (on, options) => {
       <Box flexDirection="column" rowGap={0}>
         {total > 0 &&
           (Svg ? (
-            <Svg alt={`${done} of ${total} steps done`} height={10} source={pillSvg(P, 10, total, done, running, upNext)} />
+            <Svg alt={`${done} of ${total} steps done`} height={10} source={pillSvg(P, 10, total, done, running, upNext, isFlash)} />
           ) : (
             textBar(Math.max(1, e.props.bodyColumns))
           ))}
@@ -618,6 +681,11 @@ export const register: Register = (on, options) => {
             <Text wrap="truncate-end" dimColor={isFinished || isStale} color={isFinished ? P.green : undefined}>
               {stepText}
             </Text>
+            {isStopped && current && (
+              <Box flexShrink={0}>
+                <Text color={P.orange}> · interrupted</Text>
+              </Box>
+            )}
             {isStale ? (
               <Box flexShrink={0}>
                 <Text dimColor> · not updated for {age} turns · /progress clear hides it</Text>
@@ -627,6 +695,10 @@ export const register: Register = (on, options) => {
                 <Text dimColor> · {times.join(' · ')}</Text>
               </Box>
             )}
+            <Box flexShrink={0}>
+              <Text> </Text>
+              <Button key="task-details" plain label="details ↗" onPress={() => void toggleTasks($).catch(() => undefined)} />
+            </Box>
           </Box>
         ) : linked.length > 0 && !working ? (
           <Text dimColor>No task list yet</Text>
@@ -699,6 +771,75 @@ export const register: Register = (on, options) => {
             {card.step && <Text dimColor wrap="truncate-end">   {card.step}</Text>}
           </Box>
         ))}
+      </Box>
+    )
+  })
+
+  // The task list one bar per step: done steps solid, the next orange, the
+  // running one cooling from its hot edge, its fill the time spent against the
+  // usual step's. A step that just finished flashes green.
+  on('ui.render', { component: 'Pane', requestId: TASK_PANE }, async ($, e) => {
+    const ui = $.ui.resolve(e)
+    const { Box, Text } = ui
+    const list = await read($, steps)
+    if (list.length === 0) return <Text dimColor>No task list yet.</Text>
+
+    const P = await paletteNow($, fromSettings, over)
+    const now = Math.max(await read($, clockNow), await $.clock.now())
+    const isStopped = await read($, isInterrupted)
+    const total = list.length
+    const done = list.filter(step => step.status === 'completed').length
+    const isFinished = done === total
+    const doneColor = isFinished ? P.green : P.purple
+    const { left } = timing(list, now)
+    const starts = list.flatMap(step => (step.startedAt === undefined ? [] : [step.startedAt]))
+    const span = isFinished ? listSpan(list) : starts.length > 0 ? now - Math.min(...starts) : null
+    const header = [
+      span !== null && span > 1000 ? formatSpan(span) : null,
+      !isFinished && left !== null ? `~${formatSpan(left)} left` : null,
+    ].filter(Boolean)
+    const bars = stepBars(list, now, stepEstimate(list))
+    const Svg = e.surface !== 'terminal' && 'Svg' in ui ? ui.Svg : undefined
+    const cells = Math.max(8, Math.min(40, (e.props.bodyColumns || 30) - 2))
+    const tick = Math.floor(now / TICK_MS)
+    const lookColor = { done: doneColor, flash: P.green, running: P.orange, next: P.orange, rest: P.comment } as const
+
+    return (
+      <Box flexDirection="column" rowGap={1}>
+        <Box flexDirection="row">
+          <Text bold tabular color={isFinished ? P.green : P.purple}>{done}/{total}</Text>
+          {header.length > 0 && <Text dimColor> · {header.join(' · ')}</Text>}
+          {isStopped && <Text color={P.orange}> · interrupted</Text>}
+        </Box>
+        {list.map((step, i) => {
+          const bar = bars[i] as (typeof bars)[number]
+          const mark = step.status === 'completed' ? '✓' : step.status === 'in_progress' ? (isStopped ? '⏸' : '▸') : '○'
+          const took =
+            step.startedAt === undefined ? null : step.finishedAt !== undefined ? step.finishedAt - step.startedAt : now - step.startedAt
+
+          return (
+            <Box key={`step-${i}`} flexDirection="column">
+              <Box flexDirection="row">
+                <Text color={lookColor[bar.look]}>{mark} </Text>
+                <Text wrap="truncate-end" dimColor={bar.look === 'rest'}>{step.content}</Text>
+                {took !== null && took > 1000 && (
+                  <Box flexShrink={0}>
+                    <Text dimColor> {formatSpan(took)}</Text>
+                  </Box>
+                )}
+              </Box>
+              {Svg ? (
+                <Svg alt={`${step.content}: ${step.status.replace('_', ' ')}`} height={BAR_H} source={stepSvg(P, bar, doneColor, i)} />
+              ) : (
+                <Box flexDirection="row" flexShrink={0}>
+                  {runsOf(stepCells(P, bar, doneColor, cells, tick)).map((run, j) => (
+                    <Text key={`cell-${j}`} mono color={run.color}>{run.glyph}</Text>
+                  ))}
+                </Box>
+              )}
+            </Box>
+          )
+        })}
       </Box>
     )
   })
