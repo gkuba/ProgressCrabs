@@ -66,8 +66,9 @@ export const stamp = (list: Step[], now: number): Step[] =>
     return { content: step.content, status: step.status }
   })
 
-export const completeRunning = (list: Step[], now: number): Step[] =>
-  stamp(list.map(step => (step.status === 'in_progress' ? { ...step, status: 'completed' as const } : step)), now)
+// wrap_up checks off the whole list, steps never advanced to included.
+export const completeAll = (list: Step[], now: number): Step[] =>
+  stamp(list.map(step => (step.status === 'completed' ? step : { ...step, status: 'completed' as const })), now)
 
 export const formatSpan = (ms: number) => {
   const minutes = Math.round(ms / 60_000)

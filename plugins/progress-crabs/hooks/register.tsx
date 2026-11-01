@@ -3,7 +3,7 @@ import type { EngineInterface, Register, RenderElement } from 'claude-code'
 
 import type { Activity, Side, Step } from '../types'
 import { CARD_H, MOOD, byUrgency, cardSvg, moodColor, moodOf } from './crabs'
-import { applyPlan, barCells, completeRunning, formatSpan, listSpan, timing } from './plan'
+import { applyPlan, barCells, completeAll, formatSpan, listSpan, timing } from './plan'
 import type { PlanArgs } from './plan'
 import { idleSince, latestStep, parentOf, parseLinked, resultText, textOf } from './sides'
 import type { FamilyRow } from './sides'
@@ -388,7 +388,7 @@ export const register: Register = (on, options) => {
     const ran = await next(e)
     if (!e.agentId && wentThrough(ran)) {
       const now = await $.clock.now()
-      await update($, steps, list => completeRunning(list, now))
+      await update($, steps, list => completeAll(list, now))
     }
 
     return ran

@@ -176,3 +176,21 @@ test("another mod's band beneath ours stacks above it", async ($, on) => {
   expect(texts.indexOf('▸ One')).toBeGreaterThan(0)
   await ui.unmount()
 })
+
+test('wrap_up checks off every step, pending ones too', async ($, on) => {
+  mock.clock(on)
+  on('tool.call', () => ({ result: {} }))
+  await $.tool.call({
+    tool: PLAN,
+    items: [
+      { content: 'One', status: 'in_progress' },
+      { content: 'Two', status: 'pending' },
+      { content: 'Three', status: 'pending' },
+    ],
+  } as never)
+  await $.tool.call({ tool: 'mcp__ccd_turn__wrap_up', recap: 'done' } as never)
+
+  const ui = await band($)
+  expect((await ui.find({ type: 'Text', text: /\d\/\d/ }))?.text).toBe('3/3 ')
+  await ui.unmount()
+})
