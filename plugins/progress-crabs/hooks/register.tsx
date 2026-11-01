@@ -1,5 +1,5 @@
 import { atom, read, update } from 'claude-code'
-import type { EngineInterface, Register } from 'claude-code'
+import type { EngineInterface, Register, RenderElement } from 'claude-code'
 
 import type { Activity, Side, Step } from '../types'
 import { CARD_H, MOOD, byUrgency, cardSvg, moodColor, moodOf } from './crabs'
@@ -503,6 +503,17 @@ export const register: Register = (on, options) => {
     const P = await paletteNow($, fromSettings, over)
     const ui = $.ui.resolve(e)
     const { Box, Text } = ui
+    // Another mod's band beneath ours (Simple Progress Bars, say) stacks above it, so
+    // neither hides the other. The engine's own answer is left out: ours replaces it.
+    const beneath = await next(e).catch(() => null)
+    const isTheirs = next.trace.some(link => link.tier !== 'core' && link.outcome === 'returned')
+    const stack = (band: RenderElement): RenderElement =>
+      isTheirs && beneath ? (
+        <Box flexDirection="column">
+          {beneath}
+          {band}
+        </Box>
+      ) : band
     const Svg = e.surface === 'desktop' && 'Svg' in ui ? ui.Svg : undefined
     const total = list.length
     const done = list.filter(step => step.status === 'completed').length
@@ -553,7 +564,7 @@ export const register: Register = (on, options) => {
     if (isCompact) {
       const urgent = others[0]
 
-      return (
+      return stack(
         <Box flexDirection="row">
           {total > 0 && textBar(Math.min(10, Math.max(4, Math.floor(e.props.bodyColumns / 6))))}
           {total > 0 && (
@@ -576,7 +587,7 @@ export const register: Register = (on, options) => {
       )
     }
 
-    return (
+    return stack(
       <Box flexDirection="column" rowGap={0}>
         {total > 0 &&
           (Svg ? (

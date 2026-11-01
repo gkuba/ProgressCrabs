@@ -159,3 +159,20 @@ test('on a light theme every colour role keeps 3:1 contrast', () => {
     for (const role of roles) expect([name, role, contrast(P[role], P.bg) >= 3]).toEqual([name, role, true])
   }
 })
+
+test("another mod's band beneath ours stacks above it", async ($, on) => {
+  mock.clock(on)
+  on('tool.call', () => ({ result: {} }))
+  on('ui.render', ($, e) => {
+    const { Text } = $.ui.resolve(e)
+
+    return <Text>bars beneath</Text>
+  })
+  await $.tool.call({ tool: PLAN, items: [{ content: 'One', status: 'in_progress' }] } as never)
+
+  const ui = await band($)
+  const texts = (await ui.findAll({ type: 'Text' })).map((t: { text: string }) => t.text)
+  expect(texts[0]).toBe('bars beneath')
+  expect(texts.indexOf('▸ One')).toBeGreaterThan(0)
+  await ui.unmount()
+})
