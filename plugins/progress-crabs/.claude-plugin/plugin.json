@@ -1,6 +1,6 @@
 {
   "name": "progress-crabs",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "description": "Band above the prompt with a live progress bar of the chat's task list and what Claude is doing, plus a side-sessions panel with animated crabs. Themeable: Dracula, Tokyo Night, Nord, GitHub, Gruvbox, One Dark, Catppuccin.",
   "license": "MIT",
   "types": "./types/index.d.ts",

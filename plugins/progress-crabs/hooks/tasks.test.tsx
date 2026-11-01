@@ -1,7 +1,7 @@
 import { expect, mock, test } from 'claude-code/testing'
 
 import { replay } from './plan'
-import { heat, mix, stepBars, stepCells } from './tasks'
+import { heat, mix, stepBars, stepCells, stepSvg } from './tasks'
 import { THEMES } from './themes'
 
 const PLAN = 'mcp__ccd_turn__update_plan'
@@ -62,12 +62,12 @@ test('a stopped turn marks the running step interrupted until the next update', 
   await after.unmount()
 })
 
-test('/progress list opens the Tasks pane with a bar per step', async ($, on) => {
+test('/progress list opens the Crab Tasks pane with a bar per step', async ($, on) => {
   const clock = mock.clock(on)
   on('tool.call', () => ({ result: {} }))
   const ran = await $.command.run({ command: 'progress', args: 'list' } as never)
   // The kit has no panes to open; the command answers either way.
-  expect((ran as any).text).toMatch(/Tasks pane/)
+  expect((ran as any).text).toMatch(/Crab Tasks pane/)
 
   await $.tool.call({ tool: PLAN, items: ['A', 'B', 'C', 'D'].map((content, i) => ({ content, status: i === 0 ? 'in_progress' : 'pending' })) } as never)
   for (let i = 0; i < 2; i++) {
@@ -100,7 +100,14 @@ test('the running bar cools from an orange edge and caps when it runs over', () 
   const over = stepBars(list, 700_000, 60_000)[2]
   expect(over?.fill).toBe(0.9)
   expect(over?.isOver).toBe(true)
-  expect(stepBars(list, 530_000, null)[2]?.fill).toBe(null)
+  // No estimate: it eases toward the finished steps' mean (60s), only forward, under the cap.
+  const early = stepBars(list, 530_000, null)[2]?.fill as number
+  const late = stepBars(list, 800_000, null)[2]
+  expect(Math.abs(early - 0.9 * (1 - Math.exp(-0.5)))).toBeLessThan(1e-9)
+  expect(late?.fill).toBeGreaterThan(early)
+  expect(late?.fill).toBeLessThan(0.9)
+  expect(late?.isOver).toBe(false)
+  expect(stepSvg(P, late as never, P.purple, 0)).not.toContain('infinite')
   expect(heat(P, 0.5)).toBe(P.pink)
   expect(mix('#000000', '#ffffff', 0.5)).toBe('#808080')
 })

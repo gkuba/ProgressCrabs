@@ -9,19 +9,24 @@ import type { Palette } from './themes'
 export const FLASH_MS = 1_500
 // A step that runs past its estimate fills to here and pulses at the edge.
 export const MAX_FILL = 0.9
+// With no estimate yet, the guess the bar eases toward: the finished steps'
+// mean, or this before any has finished.
+export const GUESS_MS = 90_000
 
 export type Look = 'done' | 'flash' | 'running' | 'next' | 'rest'
 
 export type StepBar = {
   look: Look
-  // Share of the bar the running step fills; null while no estimate exists.
-  fill: number | null
+  // Share of the bar the step fills.
+  fill: number
   isOver: boolean
 }
 
 export const stepBars = (list: Step[], now: number, estimate: number | null): StepBar[] => {
   const nextAt = list.findIndex(step => step.status === 'pending')
   const isRunning = list.some(step => step.status === 'in_progress')
+  const spans = list.flatMap(step => (step.startedAt !== undefined && step.finishedAt !== undefined ? [step.finishedAt - step.startedAt] : []))
+  const guess = spans.length > 0 ? Math.max(1000, spans.reduce((sum, span) => sum + span, 0) / spans.length) : GUESS_MS
 
   return list.map((step, i) => {
     if (step.status === 'completed') {
@@ -30,7 +35,9 @@ export const stepBars = (list: Step[], now: number, estimate: number | null): St
     }
     if (step.status === 'in_progress') {
       const spent = step.startedAt !== undefined ? Math.max(0, now - step.startedAt) : 0
-      if (!estimate) return { look: 'running', fill: null, isOver: false }
+      // No estimate yet: fill toward the guess, slowing as it nears the cap,
+      // so the bar only moves forward and never claims to run over.
+      if (!estimate) return { look: 'running', fill: Math.max(0.04, MAX_FILL * (1 - Math.exp(-spent / guess))), isOver: false }
 
       return { look: 'running', fill: Math.max(0.04, Math.min(MAX_FILL, spent / estimate)), isOver: spent >= estimate }
     }
@@ -68,13 +75,6 @@ export const stepSvg = (P: Palette, bar: StepBar, doneColor: string, id: number)
   if (bar.look === 'flash') return svg(solid(doneColor, 'f'), `@keyframes f{from{fill:${P.green}}to{fill:${doneColor}}}.f{animation:f ${FLASH_MS}ms ease-out forwards}`)
   if (bar.look === 'next') return svg(solid(P.orange))
   if (bar.look === 'rest') return svg('')
-  if (bar.fill === null) {
-    // No estimate yet: a pink stripe sweeps the track.
-    return svg(
-      `<rect class="s" x="-25%" y="0" width="25%" height="${BAR_H}" rx="${r}" fill="${P.pink}"/>`,
-      '@keyframes s{from{x:-25%}to{x:100%}}.s{animation:s 1.8s linear infinite}',
-    )
-  }
   const g = `heat${id}`
   const edge = Math.max(0, bar.fill - 0.03)
 
@@ -89,7 +89,7 @@ ${bar.isOver ? `<rect class="h" x="${pct(edge)}" y="0" width="${pct(bar.fill - e
 export type Cell = { glyph: string; color: string }
 
 // The terminal's bar: one coloured cell each, the clock's tick standing in
-// for animation (the stripe steps along, the hot edge blinks).
+// for animation (the hot edge blinks).
 export const stepCells = (P: Palette, bar: StepBar, doneColor: string, cells: number, tick: number): Cell[] => {
   const empty: Cell = { glyph: '░', color: P.comment }
   const all = (cell: Cell) => Array.from({ length: cells }, () => cell)
@@ -97,11 +97,6 @@ export const stepCells = (P: Palette, bar: StepBar, doneColor: string, cells: nu
   if (bar.look === 'flash') return all({ glyph: '█', color: P.green })
   if (bar.look === 'next') return all({ glyph: '▒', color: P.orange })
   if (bar.look === 'rest') return all(empty)
-  if (bar.fill === null) {
-    const at = (tick * 3) % cells
-
-    return Array.from({ length: cells }, (_, i) => (i >= at && i < at + 3 ? { glyph: '▓', color: P.pink } : empty))
-  }
   const filled = Math.max(1, Math.round(bar.fill * cells))
 
   return Array.from({ length: cells }, (_, i) => {

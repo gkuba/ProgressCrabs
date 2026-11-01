@@ -156,7 +156,7 @@ async function toggleTasks($: EngineInterface) {
 
     return false
   }
-  await $.ui.open({ id: TASK_PANE, title: 'Tasks' })
+  await $.ui.open({ id: TASK_PANE, title: 'Crab Tasks' })
 
   return true
 }
@@ -294,7 +294,7 @@ async function drainFamily($: EngineInterface) {
 const USAGE = [
   '/progress            show or hide the band',
   '/progress show|hide  show or hide it',
-  '/progress list       open or close the Tasks pane',
+  '/progress list       open or close the Crab Tasks pane',
   '/progress clear      drop the task list',
   '/progress theme      list the colour themes',
   '/progress theme <name>|default',
@@ -389,7 +389,7 @@ export const register: Register = (on, options) => {
     }
     if (verb === 'list' || verb === 'tasks') {
       const isOpen = await toggleTasks($).catch(() => null)
-      return { text: isOpen === null ? 'The Tasks pane cannot open here.' : isOpen ? 'Tasks pane open.' : 'Tasks pane closed.' }
+      return { text: isOpen === null ? 'The Crab Tasks pane cannot open here.' : isOpen ? 'Crab Tasks pane open.' : 'Crab Tasks pane closed.' }
     }
     if (verb === 'clear') {
       await update($, steps, () => [])

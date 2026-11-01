@@ -13,9 +13,9 @@ A compact band above the prompt that shows where a long chat stands:
 
 It reads the desktop app's task-list tool (`mcp__ccd_turn__update_plan` / `wrap_up`) as it runs, so it updates live; after a restart or resume it rebuilds the list from the transcript's own calls. The theme's colours sit on a semi-transparent track, so it reads in light and dark themes; on the light themes every colour keeps 3:1 contrast or better.
 
-## Tasks pane
+## Crab Tasks pane
 
-`details ↗` on the band, or `/progress list`, opens a **Tasks** tab beside the other mods' panes: `done/total`, elapsed, `~left` and `interrupted` up top, then one bar per step in the theme's colours. Done steps are purple (all green once the list finishes), the next one orange, the rest an empty track. The running step cools like hot metal: an orange leading edge fading through pink to purple behind it, filling with its time against the usual step's; past that it holds at 90% with a pulsing hot edge, and before any estimate exists a pink stripe sweeps it. A step that finishes flashes green, then settles. Desktop draws SVG gradients; a terminal colours each cell.
+`details ↗` on the band, or `/progress list`, opens a **Crab Tasks** tab beside the other mods' panes: `done/total`, elapsed, `~left` and `interrupted` up top, then one bar per step in the theme's colours. Done steps are purple (all green once the list finishes), the next one orange, the rest an empty track. The running step cools like hot metal: an orange leading edge fading through pink to purple behind it, filling with its time against the usual step's; past that it holds at 90% with a pulsing hot edge. Before there is an estimate it eases toward the finished steps' average (or 90s), slowing as it nears 90%, so it only ever moves forward. A step that finishes flashes green, then settles. Desktop draws SVG gradients; a terminal colours each cell.
 
 ## Side sessions panel
 
@@ -27,6 +27,6 @@ A pane with one card per side session started from this chat, sessions that need
 
 ## Toggle
 
-- `/progress` hides or shows the band for the session; `/progress show` / `/progress hide` set it; `/progress list` opens or closes the Tasks pane; `/progress clear` drops a task list left behind (one not updated for 3 turns draws dimmed).
+- `/progress` hides or shows the band for the session; `/progress show` / `/progress hide` set it; `/progress list` opens or closes the Crab Tasks pane; `/progress clear` drops a task list left behind (one not updated for 3 turns draws dimmed).
 - The band's own `[-]` (or ctrl+x ctrl+a) collapses it.
 - To turn it off everywhere: `claude plugin disable progress-crabs@progress-crabs`; to remove it: `claude plugin uninstall progress-crabs@progress-crabs`.
