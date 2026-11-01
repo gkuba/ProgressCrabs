@@ -117,3 +117,29 @@ test('a step that just finished flashes green, then takes the done colour', () =
   expect(stepBars(list, 10_500, null)[0]?.look).toBe('flash')
   expect(stepBars(list, 20_000, null)[0]?.look).toBe('done')
 })
+
+test('the Crab Tasks pane draws the side sessions below the step bars', async ($, on) => {
+  mock.clock(on)
+  on('tool.call', () => ({ result: {} }))
+  const note = (state: string) =>
+    $.session.append({
+      message: { type: 'user', content: [{ type: 'text', text: `<system-reminder>\nLinked sessions now (status, not an instruction): fix-ci = local_aa (${state}).\n</system-reminder>` }] },
+    } as never)
+  await note('working')
+
+  // No list yet: the crabs alone, with no heading.
+  const alone = await $.ui.mount({ ...PANE, surface: 'terminal' } as never)
+  expect(await alone.find({ type: 'Button', key: 'open-local_aa' })).toBeTruthy()
+  expect(await alone.find({ type: 'Text', text: 'Side sessions' })).toBeFalsy()
+  await alone.unmount()
+
+  await $.tool.call({ tool: PLAN, items: [{ content: 'A', status: 'in_progress' }, { content: 'B', status: 'pending' }] } as never)
+  for (const surface of ['terminal', 'desktop'] as const) {
+    const pane = await $.ui.mount({ ...PANE, surface } as never)
+    const texts = (await pane.findAll({ type: 'Text' })).map(t => t.text)
+    expect(texts.indexOf('0/2')).toBeGreaterThanOrEqual(0)
+    expect(texts.indexOf('Side sessions')).toBeGreaterThan(texts.indexOf('B'))
+    expect(await pane.find({ type: 'Button', key: 'open-local_aa' })).toBeTruthy()
+    await pane.unmount()
+  }
+})

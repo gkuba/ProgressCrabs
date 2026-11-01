@@ -1,19 +1,19 @@
 # ProgressCrabs
 
-A Claude Code mod for long chats: a live progress band above the prompt and a panel of side sessions drawn as little crabs. Dracula by default, with ten more themes.
+A Claude Code mod for long chats: a live progress band above the prompt and a **Crab Tasks** pane with a bar per step and the side sessions drawn as little crabs. Dracula by default, with ten more themes.
 
 ![Progress band through a four-step task, from 0/4 to all steps done](docs/band.png)
 
-![Side sessions panel](docs/panel.png)
+![Side sessions in the Crab Tasks pane](docs/panel.png)
 
 ## What it shows
 
 - **Progress bar**: the chat's task list as a full-width pill. In Dracula: purple = done, pink = in progress, orange = up next, slate = the rest.
 - **Working row**: what Claude is doing right now and for how long: `thinking · 42s`, `running Bash · 1m`, `writing · 2m`. Shows in any chat, task list or not.
 - **Steps and time**: `done/total`, the current step, how long it has run and `~Nm left` from the finished steps (the latest weigh most; shown once two have finished and their times agree). A finished list flashes once, then turns green with its total time. A turn stopped mid-step marks it `⏸ interrupted` until the next update. In a short or narrow window it folds into one row.
-- **Crab Tasks pane**: `details ↗` on the band or `/progress list` opens a **Crab Tasks** tab with one bar per step. The running step cools like hot metal (orange edge through pink to purple) as it fills against the usual step's time, pulses when it runs long, and flashes green when it finishes.
+- **Crab Tasks pane**: `details ↗` on the band or `/progress list` opens a **Crab Tasks** tab with one bar per step, and the side sessions below it. The running step cools like hot metal (orange edge through pink to purple) as it fills against the usual step's time, pulses when it runs long, and flashes green when it finishes.
 - **Side sessions**: each session started from this chat, by title, with its state.
-- **Crab panel**: one card per side session, and in a side session one for the chat that started it (marked `↑` when the app's list makes it certain, read every 10 seconds while any session works, every minute when all are idle). Idle times count from the session's last activity; archived sessions drop off. Sessions that need you sit at the top. The crab walks while it works, raises its claws with a `?` when it waits on you, shows a check when done. A toast pops when one finishes a turn or starts waiting; `Open ↗` switches to it.
+- **Crabs**: below the step bars in Crab Tasks (alone when there is no list), one card per side session, and in a side session one for the chat that started it (marked `↑` when the app's list makes it certain, read every 10 seconds while any session works, every minute when all are idle). Idle times count from the session's last activity; archived sessions drop off. Sessions that need you sit at the top. The crab walks while it works, raises its claws with a `?` when it waits on you, shows a check when done. A toast pops when one finishes a turn or starts waiting; `Open ↗` switches to it.
 
 Works on the desktop app (drawn as SVG) and in the terminal (block characters). Animation stops under reduced-motion settings. After a restart or resume the task list is rebuilt from the chat's transcript.
 
@@ -41,8 +41,8 @@ claude plugin install progress-crabs@progress-crabs
 
 - `/progress` hides or shows the band for the session; `/progress show` and `/progress hide` set it either way; `/progress list` opens or closes the Crab Tasks pane; `/progress clear` drops a task list left behind (one not updated for 3 turns draws dimmed). Anything else prints the usage.
 - `/progress theme [name]` lists or switches colour themes (see Themes).
-- `/crabs` shows or hides the side sessions panel (it opens by itself the first time a side session appears; once you close it, it stays closed until `/crabs`).
-- The panel reads the app's session list in the background, but never puts a permission dialog up by itself. If your permission mode would ask, the panel shows an **Allow session tools** button; press it (or run `/crabs`) and answer "always allow" to keep it current. Until then it uses the app's note.
+- `/crabs` shows or hides the Crab Tasks pane, like `/progress list` (it opens by itself the first time a side session appears; once you close it, it stays closed until you open it again).
+- The pane reads the app's session list in the background, but never puts a permission dialog up by itself. If your permission mode would ask, the pane shows an **Allow session tools** button; press it (or run `/crabs`) and answer "always allow" to keep it current. Until then it uses the app's note.
 - Turn it off: `claude plugin disable progress-crabs@progress-crabs`. Remove it: `claude plugin uninstall progress-crabs@progress-crabs`.
 
 ## Themes

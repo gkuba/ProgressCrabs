@@ -21,7 +21,7 @@ const activity = atom({ plugin: 'progress-crabs', key: 'activity' } as const, nu
 const isHidden = atom({ plugin: 'progress-crabs', key: 'isHidden' } as const, false)
 // The theme `/progress theme` picked; null falls back to the settings' theme.
 const themeName = atom({ plugin: 'progress-crabs', key: 'theme' } as const, null as string | null)
-// Set once the person closes the side sessions panel, so it stops opening by itself.
+// Set once the person closes the Crab Tasks pane, so side sessions stop opening it by itself.
 const isPaneDismissed = atom({ plugin: 'progress-crabs', key: 'isPaneDismissed' } as const, false)
 // Ticks while something works, and once a minute while side sessions sit idle,
 // so elapsed times redraw on their own.
@@ -91,7 +91,6 @@ async function setMode($: EngineInterface, mode: Activity['mode'], tool?: string
 
 const sideColor = (P: Palette, state: string) => moodColor(P, moodOf(state))
 
-const PANE = 'linked-sessions'
 const LIST_TOOL = 'mcp__ccd_session_mgmt__list_sessions'
 const EVENTS_TOOL = 'mcp__ccd_session_mgmt__list_events'
 const OPEN_TOOL = 'mcp__ccd_window__open_session_in'
@@ -116,6 +115,11 @@ async function quietCall($: EngineInterface, tool: string, args: Record<string, 
 // prompt the person typed or pasted, a tool's result or the model's own words.
 const isFromApp = (origin: { kind: string } | undefined) => !['composer', 'model', 'tool'].includes(origin?.kind ?? '')
 
+// One tab for the task list, one bar per step, with the side sessions' crabs
+// below it, beside the other mods' panes.
+const PANE = 'task-list'
+const PANE_TITLE = 'Crab Tasks'
+
 async function togglePane($: EngineInterface) {
   if ((await $.ui.panes()).some(pane => pane.id === PANE)) {
     await $.ui.close({ id: PANE })
@@ -124,14 +128,14 @@ async function togglePane($: EngineInterface) {
     return false
   }
   await update($, isPaneDismissed, () => false)
-  await $.ui.open({ id: PANE, title: 'Side sessions' })
+  await $.ui.open({ id: PANE, title: PANE_TITLE })
 
   return true
 }
 
-// Opens the panel the first time a side session appears, unless the person closed it.
+// Opens the pane the first time a side session appears, unless the person closed it.
 async function openPaneOnce($: EngineInterface) {
-  if (!(await read($, isPaneDismissed))) await $.ui.open({ id: PANE, title: 'Side sessions' })
+  if (!(await read($, isPaneDismissed))) await $.ui.open({ id: PANE, title: PANE_TITLE })
 }
 
 // The colours to draw with: the picked theme, else the settings' one, with the settings' overrides on top.
@@ -147,19 +151,6 @@ async function setTheme($: EngineInterface, name: string | null) {
 }
 
 const THEME_PANE = 'themes'
-// The task list one bar per step, a tab beside the other mods' panes.
-const TASK_PANE = 'task-list'
-
-async function toggleTasks($: EngineInterface) {
-  if ((await $.ui.panes()).some(pane => pane.id === TASK_PANE)) {
-    await $.ui.close({ id: TASK_PANE })
-
-    return false
-  }
-  await $.ui.open({ id: TASK_PANE, title: 'Crab Tasks' })
-
-  return true
-}
 
 // The list the transcript's own calls built, once per conversation, for a
 // session joined late (a restart, a resume) whose list the atoms lost.
@@ -294,7 +285,7 @@ async function drainFamily($: EngineInterface) {
 const USAGE = [
   '/progress            show or hide the band',
   '/progress show|hide  show or hide it',
-  '/progress list       open or close the Crab Tasks pane',
+  '/progress list       open or close the Crab Tasks pane (also /crabs)',
   '/progress clear      drop the task list',
   '/progress theme      list the colour themes',
   '/progress theme <name>|default',
@@ -317,7 +308,7 @@ export const register: Register = (on, options) => {
     })
     await $.command.register({
       name: 'crabs',
-      description: 'Show or hide the side sessions panel',
+      description: 'Show or hide the Crab Tasks pane with the side sessions',
     })
     // A theme picked with /progress lasts until the settings' theme changes.
     const settingsWas = await $.store.get('settingsTheme').catch(() => undefined)
@@ -388,7 +379,7 @@ export const register: Register = (on, options) => {
       return { text: `Theme: ${name}. Changing the theme in the settings replaces it.` }
     }
     if (verb === 'list' || verb === 'tasks') {
-      const isOpen = await toggleTasks($).catch(() => null)
+      const isOpen = await togglePane($).catch(() => null)
       return { text: isOpen === null ? 'The Crab Tasks pane cannot open here.' : isOpen ? 'Crab Tasks pane open.' : 'Crab Tasks pane closed.' }
     }
     if (verb === 'clear') {
@@ -409,7 +400,7 @@ export const register: Register = (on, options) => {
     // The person's own ask, so the read may put the permission dialog up.
     if (isOpen) void refreshSides($, [], true)
 
-    return { text: isOpen ? 'Side sessions panel open.' : 'Side sessions panel closed.' }
+    return { text: isOpen ? 'Crab Tasks pane open.' : 'Crab Tasks pane closed.' }
   })
 
   on('ui.close', async ($, e, next) => {
@@ -697,7 +688,7 @@ export const register: Register = (on, options) => {
             )}
             <Box flexShrink={0}>
               <Text> </Text>
-              <Button key="task-details" plain label="details ↗" onPress={() => void toggleTasks($).catch(() => undefined)} />
+              <Button key="task-details" plain label="details ↗" onPress={() => void togglePane($).catch(() => undefined)} />
             </Box>
           </Box>
         ) : linked.length > 0 && !working ? (
@@ -707,12 +698,18 @@ export const register: Register = (on, options) => {
     )
   })
 
+  // The Crab Tasks pane: the task list one bar per step (done steps solid, the
+  // next orange, the running one cooling from its hot edge, its fill the time
+  // spent against the usual step's; a step that just finished flashes green),
+  // then a card per side session below it, or the cards alone with no list.
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
     const ui = $.ui.resolve(e)
     const { Box, Text, Button } = ui
     const P = await paletteNow($, fromSettings, over)
+    const list = await read($, steps)
     const linked = await read($, sides)
-    const now = await read($, clockNow)
+    const now = Math.max(await read($, clockNow), await $.clock.now())
+    const Svg = e.surface !== 'terminal' && 'Svg' in ui ? ui.Svg : undefined
     // A press is the person's own ask, so it may put the permission dialog up.
     const open = (id: string) => () =>
       void $.tool.call({ tool: OPEN_TOOL, session_id: id, target: 'focus' } as never).catch(() => undefined)
@@ -722,8 +719,66 @@ export const register: Register = (on, options) => {
         <Button key="allow" label="Allow session tools" onPress={() => void refreshSides($, [], true)} />
       </Box>
     ) : null
-    if (linked.length === 0) {
-      return allow ?? <Text dimColor>No side sessions from this chat yet.</Text>
+    if (list.length === 0 && linked.length === 0) {
+      return allow ?? <Text dimColor>No task list or side sessions yet.</Text>
+    }
+
+    const tasks = async () => {
+      const isStopped = await read($, isInterrupted)
+      const total = list.length
+      const done = list.filter(step => step.status === 'completed').length
+      const isFinished = done === total
+      const doneColor = isFinished ? P.green : P.purple
+      const { left } = timing(list, now)
+      const starts = list.flatMap(step => (step.startedAt === undefined ? [] : [step.startedAt]))
+      const span = isFinished ? listSpan(list) : starts.length > 0 ? now - Math.min(...starts) : null
+      const header = [
+        span !== null && span > 1000 ? formatSpan(span) : null,
+        !isFinished && left !== null ? `~${formatSpan(left)} left` : null,
+      ].filter(Boolean)
+      const bars = stepBars(list, now, stepEstimate(list))
+      const cells = Math.max(8, Math.min(40, (e.props.bodyColumns || 30) - 2))
+      const tick = Math.floor(now / TICK_MS)
+      const lookColor = { done: doneColor, flash: P.green, running: P.orange, next: P.orange, rest: P.comment } as const
+
+      return (
+        <Box key="tasks" flexDirection="column" rowGap={1}>
+          <Box flexDirection="row">
+            <Text bold tabular color={isFinished ? P.green : P.purple}>{done}/{total}</Text>
+            {header.length > 0 && <Text dimColor> · {header.join(' · ')}</Text>}
+            {isStopped && <Text color={P.orange}> · interrupted</Text>}
+          </Box>
+          {list.map((step, i) => {
+            const bar = bars[i] as (typeof bars)[number]
+            const mark = step.status === 'completed' ? '✓' : step.status === 'in_progress' ? (isStopped ? '⏸' : '▸') : '○'
+            const took =
+              step.startedAt === undefined ? null : step.finishedAt !== undefined ? step.finishedAt - step.startedAt : now - step.startedAt
+
+            return (
+              <Box key={`step-${i}`} flexDirection="column">
+                <Box flexDirection="row">
+                  <Text color={lookColor[bar.look]}>{mark} </Text>
+                  <Text wrap="truncate-end" dimColor={bar.look === 'rest'}>{step.content}</Text>
+                  {took !== null && took > 1000 && (
+                    <Box flexShrink={0}>
+                      <Text dimColor> {formatSpan(took)}</Text>
+                    </Box>
+                  )}
+                </Box>
+                {Svg ? (
+                  <Svg alt={`${step.content}: ${step.status.replace('_', ' ')}`} height={BAR_H} source={stepSvg(P, bar, doneColor, i)} />
+                ) : (
+                  <Box flexDirection="row" flexShrink={0}>
+                    {runsOf(stepCells(P, bar, doneColor, cells, tick)).map((run, j) => (
+                      <Text key={`cell-${j}`} mono color={run.color}>{run.glyph}</Text>
+                    ))}
+                  </Box>
+                )}
+              </Box>
+            )
+          })}
+        </Box>
+      )
     }
 
     const cards = byUrgency(linked).map(side => ({
@@ -735,111 +790,40 @@ export const register: Register = (on, options) => {
         elapsed: side.since !== undefined && now > side.since ? formatSpan(now - side.since) : undefined,
       },
     }))
-
-    if (e.surface !== 'terminal' && 'Svg' in ui) {
-      const { Svg } = ui
-      const W = Math.max(240, Math.min(560, (e.props.bodyColumns || 40) * 8 - 8))
-
-      return (
-        <Box flexDirection="column" rowGap={1}>
-          {allow}
-          {cards.map(({ side, card }) => (
-            <Box key={side.id} flexDirection="column">
-              <Svg
-                alt={`${card.title}: ${MOOD[card.mood].label}${card.step ? `, ${card.step}` : ''}`}
-                width={W}
-                height={CARD_H}
-                source={cardSvg(P, W, card)}
-              />
-              <Button key={`open-${side.id}`} plain label={`Open ${card.title} ↗`} onPress={open(side.id)} />
-            </Box>
-          ))}
-        </Box>
-      )
-    }
-
-    return (
-      <Box flexDirection="column">
+    const W = Math.max(240, Math.min(560, (e.props.bodyColumns || 40) * 8 - 8))
+    const crabs = (
+      <Box key="crabs" flexDirection="column" rowGap={Svg ? 1 : 0}>
+        {list.length > 0 && (linked.length > 0 || allow) && <Text bold>Side sessions</Text>}
         {allow}
-        {cards.map(({ side, card }) => (
-          <Box key={side.id} flexDirection="column">
-            <Button key={`open-${side.id}`} plain onPress={open(side.id)}>
-              <Text color={moodColor(P, card.mood)}>🦀 </Text>
-              {card.title}
-              <Text dimColor> {[MOOD[card.mood].label, card.elapsed].filter(Boolean).join(' · ')}</Text>
-            </Button>
-            {card.step && <Text dimColor wrap="truncate-end">   {card.step}</Text>}
-          </Box>
-        ))}
+        {Svg
+          ? cards.map(({ side, card }) => (
+              <Box key={side.id} flexDirection="column">
+                <Svg
+                  alt={`${card.title}: ${MOOD[card.mood].label}${card.step ? `, ${card.step}` : ''}`}
+                  width={W}
+                  height={CARD_H}
+                  source={cardSvg(P, W, card)}
+                />
+                <Button key={`open-${side.id}`} plain label={`Open ${card.title} ↗`} onPress={open(side.id)} />
+              </Box>
+            ))
+          : cards.map(({ side, card }) => (
+              <Box key={side.id} flexDirection="column">
+                <Button key={`open-${side.id}`} plain onPress={open(side.id)}>
+                  <Text color={moodColor(P, card.mood)}>🦀 </Text>
+                  {card.title}
+                  <Text dimColor> {[MOOD[card.mood].label, card.elapsed].filter(Boolean).join(' · ')}</Text>
+                </Button>
+                {card.step && <Text dimColor wrap="truncate-end">   {card.step}</Text>}
+              </Box>
+            ))}
       </Box>
     )
-  })
-
-  // The task list one bar per step: done steps solid, the next orange, the
-  // running one cooling from its hot edge, its fill the time spent against the
-  // usual step's. A step that just finished flashes green.
-  on('ui.render', { component: 'Pane', requestId: TASK_PANE }, async ($, e) => {
-    const ui = $.ui.resolve(e)
-    const { Box, Text } = ui
-    const list = await read($, steps)
-    if (list.length === 0) return <Text dimColor>No task list yet.</Text>
-
-    const P = await paletteNow($, fromSettings, over)
-    const now = Math.max(await read($, clockNow), await $.clock.now())
-    const isStopped = await read($, isInterrupted)
-    const total = list.length
-    const done = list.filter(step => step.status === 'completed').length
-    const isFinished = done === total
-    const doneColor = isFinished ? P.green : P.purple
-    const { left } = timing(list, now)
-    const starts = list.flatMap(step => (step.startedAt === undefined ? [] : [step.startedAt]))
-    const span = isFinished ? listSpan(list) : starts.length > 0 ? now - Math.min(...starts) : null
-    const header = [
-      span !== null && span > 1000 ? formatSpan(span) : null,
-      !isFinished && left !== null ? `~${formatSpan(left)} left` : null,
-    ].filter(Boolean)
-    const bars = stepBars(list, now, stepEstimate(list))
-    const Svg = e.surface !== 'terminal' && 'Svg' in ui ? ui.Svg : undefined
-    const cells = Math.max(8, Math.min(40, (e.props.bodyColumns || 30) - 2))
-    const tick = Math.floor(now / TICK_MS)
-    const lookColor = { done: doneColor, flash: P.green, running: P.orange, next: P.orange, rest: P.comment } as const
 
     return (
       <Box flexDirection="column" rowGap={1}>
-        <Box flexDirection="row">
-          <Text bold tabular color={isFinished ? P.green : P.purple}>{done}/{total}</Text>
-          {header.length > 0 && <Text dimColor> · {header.join(' · ')}</Text>}
-          {isStopped && <Text color={P.orange}> · interrupted</Text>}
-        </Box>
-        {list.map((step, i) => {
-          const bar = bars[i] as (typeof bars)[number]
-          const mark = step.status === 'completed' ? '✓' : step.status === 'in_progress' ? (isStopped ? '⏸' : '▸') : '○'
-          const took =
-            step.startedAt === undefined ? null : step.finishedAt !== undefined ? step.finishedAt - step.startedAt : now - step.startedAt
-
-          return (
-            <Box key={`step-${i}`} flexDirection="column">
-              <Box flexDirection="row">
-                <Text color={lookColor[bar.look]}>{mark} </Text>
-                <Text wrap="truncate-end" dimColor={bar.look === 'rest'}>{step.content}</Text>
-                {took !== null && took > 1000 && (
-                  <Box flexShrink={0}>
-                    <Text dimColor> {formatSpan(took)}</Text>
-                  </Box>
-                )}
-              </Box>
-              {Svg ? (
-                <Svg alt={`${step.content}: ${step.status.replace('_', ' ')}`} height={BAR_H} source={stepSvg(P, bar, doneColor, i)} />
-              ) : (
-                <Box flexDirection="row" flexShrink={0}>
-                  {runsOf(stepCells(P, bar, doneColor, cells, tick)).map((run, j) => (
-                    <Text key={`cell-${j}`} mono color={run.color}>{run.glyph}</Text>
-                  ))}
-                </Box>
-              )}
-            </Box>
-          )
-        })}
+        {list.length > 0 && (await tasks())}
+        {crabs}
       </Box>
     )
   })

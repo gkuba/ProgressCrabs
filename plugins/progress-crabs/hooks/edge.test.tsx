@@ -136,7 +136,7 @@ test('a background read never asks; /crabs and the Allow button do', async ($, o
   await settle()
   expect(lists).toBe(0)
 
-  const pane = await $.ui.mount({ plugin: 'progress-crabs', component: 'Pane', requestId: 'linked-sessions', surface: 'terminal', props: { bodyColumns: 60 } } as never)
+  const pane = await $.ui.mount({ plugin: 'progress-crabs', component: 'Pane', requestId: 'task-list', surface: 'terminal', props: { bodyColumns: 60 } } as never)
   const button = await pane.find({ type: 'Button', key: 'allow' })
   expect(button).toBeDefined()
   await pane.unmount()
@@ -274,7 +274,7 @@ test('a good read drops archived and ended sessions and dates idle ones by their
   await settle()
   await clock.advance(30_000)
   await settle()
-  const pane = await $.ui.mount({ plugin: 'progress-crabs', component: 'Pane', requestId: 'linked-sessions', surface: 'terminal', props: { bodyColumns: 60 } } as never)
+  const pane = await $.ui.mount({ plugin: 'progress-crabs', component: 'Pane', requestId: 'task-list', surface: 'terminal', props: { bodyColumns: 60 } } as never)
   expect(await pane.find({ type: 'Text', text: /gone|Old/ })).toBeUndefined()
   // Idle since minute 4, not since the mod first saw it at minute 10.
   expect((await pane.find({ type: 'Text', text: /· \d+m/ }))?.text).toMatch(/· [67]m/)

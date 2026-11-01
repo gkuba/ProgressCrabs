@@ -150,7 +150,7 @@ test('the side sessions panel shows a card per session and toasts a finish', asy
     const ui = await $.ui.mount({
       plugin: 'progress-crabs',
       component: 'Pane',
-      requestId: 'linked-sessions',
+      requestId: 'task-list',
       surface,
       props: { title: 'Side sessions', isFocused: false, bodyColumns: 60, placement: 'dock', scroll: { offset: 0, bodyRows: 20 }, view: {} },
     } as never)
@@ -225,7 +225,7 @@ test('a side session shows the session that started it, and its finish', async (
   const ui = await $.ui.mount({
     plugin: 'progress-crabs',
     component: 'Pane',
-    requestId: 'linked-sessions',
+    requestId: 'task-list',
     surface: 'terminal',
     props: { title: 'Side sessions', isFocused: false, bodyColumns: 60, placement: 'dock', scroll: { offset: 0, bodyRows: 20 }, view: {} },
   } as never)

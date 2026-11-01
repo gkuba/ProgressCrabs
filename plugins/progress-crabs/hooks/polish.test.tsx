@@ -133,7 +133,7 @@ test('the panel puts sessions that need you first, then working ones', async ($,
   await $.session.append({ message: { type: 'user', content: [{ type: 'text', text: reminder(note) }] } } as never)
   await settle()
 
-  const pane = await $.ui.mount({ plugin: 'progress-crabs', component: 'Pane', requestId: 'linked-sessions', surface: 'terminal', props: { bodyColumns: 60 } } as never)
+  const pane = await $.ui.mount({ plugin: 'progress-crabs', component: 'Pane', requestId: 'task-list', surface: 'terminal', props: { bodyColumns: 60 } } as never)
   const keys = (await pane.findAll({ type: 'Button' })).map(b => b.key)
   expect(keys).toEqual(['open-local_cc', 'open-local_bb', 'open-local_aa'])
   expect(await pane.find({ type: 'Text', text: /needs you/ })).toBeDefined()
