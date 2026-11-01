@@ -10,7 +10,7 @@ A Claude Code mod for long chats: a live progress band above the prompt and a pa
 - **Working row**: what Claude is doing right now and for how long: `thinking · 42s`, `running Bash · 1m`, `writing · 2m`. Shows in any chat, task list or not.
 - **Steps and time**: `done/total`, the current step, how long it has run and `~Nm left (rough)` from the average finished step.
 - **Side sessions**: each session started from this chat, by title, with its state.
-- **Crab panel**: one card per side session, and in a side session one for the chat that started it (marked `↑`, read every 30 seconds). The crab walks while it works, raises its claws with a `?` when it waits on you, shows a check when done. A toast pops when one finishes a turn or starts waiting; `Open ↗` switches to it.
+- **Crab panel**: one card per side session, and in a side session one for the chat that started it (marked `↑` when the app's list makes it certain, read every 30 seconds). Idle times count from the session's last activity; archived sessions drop off. The crab walks while it works, raises its claws with a `?` when it waits on you, shows a check when done. A toast pops when one finishes a turn or starts waiting; `Open ↗` switches to it.
 
 Works on the desktop app (drawn as SVG) and in the terminal (block characters). Animation stops under reduced-motion settings.
 
@@ -36,10 +36,10 @@ claude plugin install progress-crabs@progress-crabs
 
 ## Use
 
-- `/progress` hides or shows the band for the session; `/progress show` and `/progress hide` set it either way. Anything else prints the usage.
+- `/progress` hides or shows the band for the session; `/progress show` and `/progress hide` set it either way; `/progress clear` drops a task list left behind (one not updated for 3 turns draws dimmed). Anything else prints the usage.
 - `/progress theme [name]` lists or switches colour themes (see Themes).
 - `/crabs` shows or hides the side sessions panel (it opens by itself the first time a side session appears; once you close it, it stays closed until `/crabs`).
-- The panel reads the app's session list in the background. If your permission mode asks before those tools run, it asks once per session; answer "always allow" to keep the panel current, or decline and it falls back to the app's note.
+- The panel reads the app's session list in the background, but never puts a permission dialog up by itself. If your permission mode would ask, the panel shows an **Allow session tools** button; press it (or run `/crabs`) and answer "always allow" to keep it current. Until then it uses the app's note.
 - Turn it off: `claude plugin disable progress-crabs@progress-crabs`. Remove it: `claude plugin uninstall progress-crabs@progress-crabs`.
 
 ## Themes

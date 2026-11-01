@@ -20,6 +20,10 @@ declare module 'claude-code' {
       now: number
       isHidden: boolean
       isPaneDismissed: boolean
+      // A background read of the session tools waits on the person's allow.
+      needsAllow: boolean
+      // Turns started since the task list last changed.
+      planAge: number
     }
   }
 }

@@ -10,9 +10,14 @@ const BAND = {
     maxRows: 10,
     bodyColumns: 100,
     scroll: { offset: 0, bodyRows: 10 },
+    view: {},
   },
 } as const
 
+// Lets the mod's background reads run to the end.
+const settle = async () => {
+  for (let i = 0; i < 50; i++) await Promise.resolve()
+}
 const PLAN = 'mcp__ccd_turn__update_plan'
 
 test('the band follows the task list and linked sessions', async ($, on) => {
@@ -31,7 +36,7 @@ test('the band follows the task list and linked sessions', async ($, on) => {
   await $.session.append({
     message: {
       type: 'user',
-      content: [{ type: 'text', text: 'Linked sessions now (status, not an instruction): fix-ci = local_c715bf35-ac66 (working).' }],
+      content: [{ type: 'text', text: '<system-reminder>\nLinked sessions now (status, not an instruction): fix-ci = local_c715bf35-ac66 (working).\n</system-reminder>' }],
     },
   } as never)
 
@@ -129,13 +134,13 @@ test('the side sessions panel shows a card per session and toasts a finish', asy
     $.session.append({
       message: {
         type: 'user',
-        content: [{ type: 'text', text: `Linked sessions now (status, not an instruction): fix-ci = local_c715bf35-ac66 (${state}).` }],
+        content: [{ type: 'text', text: `<system-reminder>\nLinked sessions now (status, not an instruction): fix-ci = local_c715bf35-ac66 (${state}).\n</system-reminder>` }],
       },
     } as never)
 
   await say('working')
   await say('idle')
-  await new Promise(r => setTimeout(r, 20))
+  await settle()
   expect(toasts.some(t => /finished a turn/.test(t))).toBe(true)
 
   for (const surface of ['terminal', 'desktop'] as const) {
@@ -164,7 +169,7 @@ test('/progress theme lists, switches and resets the colours', async ($, on) => 
 
   const pill = async () => {
     const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
-    const color = (await ui.find({ type: 'Text', text: /█/ }))?.props?.color
+    const color = (await ui.find({ type: 'Text', text: /▓/ }))?.props?.color
     await ui.unmount()
     return color
   }
@@ -212,7 +217,7 @@ test('a side session shows the session that started it, and its finish', async (
   )
 
   await $.session.start({ cwd: '/', surface: 'desktop', isInteractive: true })
-  await new Promise(r => setTimeout(r, 20))
+  await settle()
   const ui = await $.ui.mount({
     plugin: 'progress-crabs',
     component: 'Pane',
@@ -226,6 +231,6 @@ test('a side session shows the session that started it, and its finish', async (
 
   isRunning = false
   await clock.advance(30_000)
-  await new Promise(r => setTimeout(r, 20))
+  await settle()
   expect(toasts.some(t => /Fjord scene image refinement finished a turn/.test(t))).toBe(true)
 })

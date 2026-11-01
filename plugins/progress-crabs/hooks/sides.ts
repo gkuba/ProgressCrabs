@@ -41,15 +41,64 @@ const LINKED = /([\w.-]+(?: [\w.-]+)*) = (local_[0-9a-f-]+) \(([^)]+)\)/g
 
 export type Linked = { name: string; id: string; state: string }
 
-// The sessions the note names, or null when the text holds no note. The note
-// runs to the first blank line or the end of its reminder, so a list spread
-// over lines reads whole.
-export const parseLinked = (text: string): Linked[] | null => {
-  const at = text.indexOf(NOTE)
-  if (at < 0) return null
-  const rest = text.slice(at + NOTE.length)
-  const end = rest.search(/\n\s*\n|<\/system-reminder>/)
-  const body = end < 0 ? rest : rest.slice(0, end)
+// Pasted text, closed or cut off: the person's paste, never the app's note.
+const PASTED = /<pasted_content[^>]*>[\s\S]*?<\/pasted_content[^>]*>|<pasted_content[^>]*>[\s\S]*$/g
+const REMINDER = /<system-reminder>([\s\S]*?)<\/system-reminder>/g
 
-  return [...body.matchAll(LINKED)].map(m => ({ name: m[1] ?? '', id: m[2] ?? '', state: m[3] ?? '' }))
+// The sessions the note names, or null when the text holds no note. The note
+// is read only inside a system reminder outside any paste, and runs to the
+// first blank line or the reminder's end, so a list spread over lines reads whole.
+export const parseLinked = (text: string): Linked[] | null => {
+  for (const [, reminder = ''] of text.replace(PASTED, '').matchAll(REMINDER)) {
+    const at = reminder.indexOf(NOTE)
+    if (at < 0) continue
+    const rest = reminder.slice(at + NOTE.length)
+    const end = rest.search(/\n\s*\n/)
+    const body = end < 0 ? rest : rest.slice(0, end)
+
+    return [...body.matchAll(LINKED)].map(m => ({ name: m[1] ?? '', id: m[2] ?? '', state: m[3] ?? '' }))
+  }
+
+  return null
+}
+
+// A row of the app's list_sessions answer, as far as the mod reads it.
+export type FamilyRow = {
+  sessionId?: string
+  title?: string
+  name?: string
+  isRunning?: boolean
+  isArchived?: boolean
+  startedBy?: string
+  lastActivityAt?: string
+}
+
+// The session that started this chat, when the list says so for certain. The
+// list leaves this chat out, so the rows whose starter is not listed are this
+// chat's own children; with them and theirs set aside, a single row that no
+// one started is the parent. Anything else (siblings, a deeper chain) is
+// ambiguous, and no card gets the arrow.
+export function parentOf(rows: FamilyRow[]): string | undefined {
+  const ids = new Set(rows.map(row => row.sessionId))
+  const ours = new Set(rows.filter(row => row.startedBy && !ids.has(row.startedBy)).map(row => row.sessionId))
+  let grew = true
+  while (grew) {
+    grew = false
+    for (const row of rows) {
+      if (!ours.has(row.sessionId) && row.startedBy && ours.has(row.startedBy)) {
+        ours.add(row.sessionId)
+        grew = true
+      }
+    }
+  }
+  const rest = rows.filter(row => !ours.has(row.sessionId))
+
+  return rest.length === 1 && !rest[0]?.startedBy ? rest[0]?.sessionId : undefined
+}
+
+// When an idle session last did anything, by the list's clock; never later than now.
+export const idleSince = (row: FamilyRow | undefined, now: number) => {
+  const at = row?.lastActivityAt ? Date.parse(row.lastActivityAt) : NaN
+
+  return Number.isFinite(at) ? Math.min(now, at) : undefined
 }

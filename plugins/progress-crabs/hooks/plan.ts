@@ -77,18 +77,23 @@ export const formatSpan = (ms: number) => {
   return `${Math.floor(minutes / 60)}h ${String(minutes % 60).padStart(2, '0')}m`
 }
 
+// How much each newer step's span moves the estimate.
+const RECENT_WEIGHT = 0.4
+
 // Elapsed time of the running step, and a rough estimate of what is left from
-// the average of the steps that ran for a measured time.
+// the steps that ran for a measured time, the latest weighing most.
 export const timing = (list: Step[], now: number) => {
   const current = list.find(step => step.status === 'in_progress')
   const elapsed = current?.startedAt !== undefined ? Math.max(0, now - current.startedAt) : null
   const spans = list
     .filter(step => step.status === 'completed' && step.startedAt !== undefined && step.finishedAt !== undefined)
+    .sort((a, b) => (a.finishedAt as number) - (b.finishedAt as number))
     .map(step => (step.finishedAt as number) - (step.startedAt as number))
     .filter(span => span > 1000)
-  if (spans.length === 0) return { elapsed, left: null }
+  const [first, ...later] = spans
+  if (first === undefined) return { elapsed, left: null }
 
-  const average = spans.reduce((sum, span) => sum + span, 0) / spans.length
+  const average = later.reduce((avg, span) => RECENT_WEIGHT * span + (1 - RECENT_WEIGHT) * avg, first)
   const pending = list.filter(step => step.status === 'pending').length
   const left = pending * average + (current ? Math.max(0, average - (elapsed ?? 0)) : 0)
 

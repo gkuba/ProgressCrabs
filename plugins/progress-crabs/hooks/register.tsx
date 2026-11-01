@@ -5,7 +5,8 @@ import type { Activity, Side, Step } from '../types'
 import { CARD_H, MOOD, cardSvg, moodColor, moodOf } from './crabs'
 import { applyPlan, barCells, completeRunning, formatSpan, timing } from './plan'
 import type { PlanArgs } from './plan'
-import { latestStep, parseLinked, resultText, textOf } from './sides'
+import { idleSince, latestStep, parentOf, parseLinked, resultText, textOf } from './sides'
+import type { FamilyRow } from './sides'
 import { DEFAULT_THEME, THEMES, isTheme, paletteOf } from './themes'
 import type { Overrides, Palette } from './themes'
 
@@ -24,6 +25,11 @@ const isPaneDismissed = atom({ plugin: 'progress-crabs', key: 'isPaneDismissed' 
 // Ticks while something works, and once a minute while side sessions sit idle,
 // so elapsed times redraw on their own.
 const clockNow = atom({ plugin: 'progress-crabs', key: 'now' } as const, 0)
+// Set while a background read of the session tools would put up a permission dialog.
+const needsAllow = atom({ plugin: 'progress-crabs', key: 'needsAllow' } as const, false)
+// Turns started since the task list last changed; an old list draws dimmed.
+const planAge = atom({ plugin: 'progress-crabs', key: 'planAge' } as const, 0)
+const STALE_TURNS = 3
 const TICK_MS = 5_000
 const FAMILY_MS = 30_000
 
@@ -77,22 +83,21 @@ const LIST_TOOL = 'mcp__ccd_session_mgmt__list_sessions'
 const EVENTS_TOOL = 'mcp__ccd_session_mgmt__list_events'
 const OPEN_TOOL = 'mcp__ccd_window__open_session_in'
 
-// Tools a background call has already put to the permission decider once.
-const askedOnce = new Set<string>()
-
-// A background call of the app's session tools. One the decision leaves to the
-// mode or the person is made once per session (so "always allow" can answer
-// it), then skipped: a timer never keeps putting a dialog in front of the person.
-async function quietCall($: EngineInterface, tool: string, args: Record<string, unknown>) {
+// A call of the app's session tools. One the decision leaves to the person is
+// made only when the person asked (/crabs, the panel's Allow button), never from
+// a timer: the band says so instead of putting a dialog up unasked.
+async function quietCall($: EngineInterface, tool: string, args: Record<string, unknown>, mayAsk = false) {
   const { decision } = await $.tool.check({ tool, input: args })
-  if (decision === 'deny' || (decision === 'ask' && askedOnce.has(tool))) throw new Error(`${tool}: ${decision}`)
-  if (decision === 'ask') askedOnce.add(tool)
+  if (decision === 'deny') throw new Error(`${tool}: deny`)
+  if (decision === 'ask' && !mayAsk) {
+    await update($, needsAllow, () => true)
+    throw new Error(`${tool}: ask`)
+  }
   const ran = await $.tool.call({ tool, ...args } as never)
+  await update($, needsAllow, () => false)
 
   return resultText('result' in ran ? ran.result : '')
 }
-
-type FamilyRow = { sessionId?: string; title?: string; name?: string; isRunning?: boolean; startedBy?: string }
 
 // The note's parse, read only from what the app or a plugin appended: never a
 // prompt the person typed or pasted, a tool's result or the model's own words.
@@ -129,8 +134,11 @@ const themeList = (current: string) =>
 // Whether the family has been read once; until then each tick tries again
 // (the app's tools may connect after the session starts).
 let isFamilyRead = false
-// One refresh at a time, so two never toast the same finish.
-let refreshing: Promise<void> = Promise.resolve()
+// One read at a time, so two never toast the same finish; asks made while one
+// runs fold into a single read after it.
+let queued: Set<string> | null = null
+let queuedAsk = false
+let running: Promise<void> | null = null
 const resetFamily = () => {
   isFamilyRead = false
 }
@@ -139,23 +147,26 @@ const resetFamily = () => {
 // sessions the "Linked sessions now" note leaves out (the one that started
 // this chat, and sessions further down), with their running state. Then the
 // latest step of the ones named, or of any whose state changed.
-async function readFamily($: EngineInterface, stepsOf: string[]) {
+async function readFamily($: EngineInterface, stepsOf: string[], mayAsk = false) {
   let rows: FamilyRow[] | null = null
   try {
-    const parsed: unknown = JSON.parse((await quietCall($, LIST_TOOL, { linked: true })) || '[]')
-    rows = Array.isArray(parsed) ? (parsed as FamilyRow[]) : []
+    const parsed: unknown = JSON.parse((await quietCall($, LIST_TOOL, { linked: true }, mayAsk)) || '[]')
+    rows = Array.isArray(parsed) ? (parsed as FamilyRow[]).filter(row => row.sessionId && !row.isArchived) : []
     isFamilyRead = true
   } catch {
     // The panel falls back to the short names and the note's sessions.
   }
   const now = await $.clock.now()
   const before = await read($, sides)
-  const fromNote = before.filter(side => !side.isListed)
+  const rowOf = new Map((rows ?? []).map(row => [row.sessionId as string, row]))
+  // A good read drops the note's sessions it no longer lists (archived, ended).
+  const fromNote = before.filter(side => !side.isListed && (rows === null || rowOf.has(side.id)))
+  const parent = rows === null ? undefined : parentOf(rows)
   // A failed read keeps the cards it had rather than dropping them.
   const listed: Side[] = rows === null
     ? before.filter(side => side.isListed)
     : rows
-        .filter(row => row.sessionId && !fromNote.some(side => side.id === row.sessionId))
+        .filter(row => !fromNote.some(side => side.id === row.sessionId))
         .map(row => {
           const id = row.sessionId as string
           const was = before.find(side => side.id === id)
@@ -164,11 +175,11 @@ async function readFamily($: EngineInterface, stepsOf: string[]) {
           return {
             ...was,
             id,
-            name: row.name ?? 'parent',
+            name: row.name ?? row.title ?? 'session',
             title: row.title ?? was?.title,
             state,
             isListed: true,
-            isParent: !row.startedBy,
+            isParent: id === parent,
             since: was && was.state === state ? was.since : now,
           }
         })
@@ -187,25 +198,46 @@ async function readFamily($: EngineInterface, stepsOf: string[]) {
     }
   }
   const titles = new Map((rows ?? []).filter(row => row.sessionId && row.title).map(row => [row.sessionId as string, row.title as string]))
+  // A note's session that arrived during the read stays; the list has not seen it yet.
+  const isKept = (side: Side) => rows === null || rowOf.has(side.id) || !before.some(b => b.id === side.id)
   const merged = await update($, sides, list =>
-    [...list.filter(side => !side.isListed), ...listed].map(side => ({
-      ...side,
-      title: titles.get(side.id) ?? side.title,
-      step: found.get(side.id) ?? side.step,
-    })),
+    [...list.filter(side => !side.isListed && isKept(side)), ...listed].map(side => {
+      // An idle session's time counts from its last activity, not from when the mod first saw it.
+      const quietSince = moodOf(side.state) === 'working' || moodOf(side.state) === 'waiting' ? undefined : idleSince(rowOf.get(side.id), now)
+
+      return {
+        ...side,
+        title: titles.get(side.id) ?? side.title,
+        step: found.get(side.id) ?? side.step,
+        since: quietSince ?? side.since,
+      }
+    }),
   )
   if (before.length === 0 && merged.length > 0) await openPaneOnce($)
 }
 
-function refreshSides($: EngineInterface, stepsOf: string[]) {
-  refreshing = refreshing.then(() => readFamily($, stepsOf)).catch(() => undefined)
+function refreshSides($: EngineInterface, stepsOf: string[], mayAsk = false) {
+  queued = new Set([...(queued ?? []), ...stepsOf])
+  queuedAsk ||= mayAsk
+  if (!running) running = drainFamily($).finally(() => { running = null })
 
-  return refreshing
+  return running
+}
+
+async function drainFamily($: EngineInterface) {
+  while (queued) {
+    const ids = [...queued]
+    const ask = queuedAsk
+    queued = null
+    queuedAsk = false
+    await readFamily($, ids, ask).catch(() => undefined)
+  }
 }
 
 const USAGE = [
   '/progress            show or hide the band',
   '/progress show|hide  show or hide it',
+  '/progress clear      drop the task list',
   '/progress theme      list the colour themes',
   '/progress theme <name>|default',
 ].join('\n')
@@ -223,7 +255,7 @@ export const register: Register = (on, options) => {
     await $.command.register({
       name: 'progress',
       description: 'Show or hide the task progress band; `theme` lists or switches colour themes',
-      argumentHint: '[show|hide|theme [name|default]]',
+      argumentHint: '[show|hide|clear|theme [name|default]]',
     })
     await $.command.register({
       name: 'crabs',
@@ -265,6 +297,7 @@ export const register: Register = (on, options) => {
   on('session.end', async ($, e, next) => {
     if (e.reason === 'clear') {
       await update($, steps, () => [])
+      await update($, planAge, () => 0)
       await update($, sides, () => [])
       await update($, activity, () => null)
       resetFamily()
@@ -290,6 +323,11 @@ export const register: Register = (on, options) => {
       await update($, themeName, () => name)
       return { text: `Theme: ${name}. Changing the theme in the settings replaces it.` }
     }
+    if (verb === 'clear') {
+      await update($, steps, () => [])
+      await update($, planAge, () => 0)
+      return { text: 'Task list cleared from the band.' }
+    }
     if (verb !== '' && !['show', 'on', 'hide', 'off'].includes(verb)) return { text: `Unknown "${verb}". Usage:\n${USAGE}` }
 
     const hidden = await update($, isHidden, was => (verb === '' ? !was : verb === 'hide' || verb === 'off'))
@@ -299,6 +337,8 @@ export const register: Register = (on, options) => {
 
   on('command.run', { command: 'crabs' }, async $ => {
     const isOpen = await togglePane($)
+    // The person's own ask, so the read may put the permission dialog up.
+    if (isOpen) void refreshSides($, [], true)
 
     return { text: isOpen ? 'Side sessions panel open.' : 'Side sessions panel closed.' }
   })
@@ -316,6 +356,7 @@ export const register: Register = (on, options) => {
     if (!e.agentId && wentThrough(ran)) {
       const now = await $.clock.now()
       await update($, steps, list => applyPlan(list, e as unknown as PlanArgs, now))
+      await update($, planAge, () => 0)
       await update($, clockNow, () => now)
     }
 
@@ -339,11 +380,21 @@ export const register: Register = (on, options) => {
       await update($, activity, () => ({ mode: 'thinking', since: now }))
       await update($, clockNow, () => now)
       // A list finished in an earlier turn makes way for the next one.
-      await update($, steps, list => (list.length > 0 && list.every(step => step.status === 'completed') ? [] : list))
+      const list = await update($, steps, was => (was.length > 0 && was.every(step => step.status === 'completed') ? [] : was))
+      await update($, planAge, age => (list.length > 0 ? age + 1 : 0))
       if (!isFamilyRead) void refreshSides($, [])
+      // A prompt typed mid-turn can take the band over while it queues; draw it again.
+      $.ui.invalidate('ui.render')
     }
 
     return started
+  })
+
+  on('prompt.submit', async ($, e, next) => {
+    const entered = await next(e)
+    if (e.turnId) $.ui.invalidate('ui.render')
+
+    return entered
   })
 
   on('turn.step', async function* ($, e, next) {
@@ -437,6 +488,9 @@ export const register: Register = (on, options) => {
     const running = list.filter(step => step.status === 'in_progress').length
     const current = list.find(step => step.status === 'in_progress')
     const isFinished = total > 0 && done === total
+    const age = await read($, planAge)
+    // A list no update has touched for a few turns was likely left behind.
+    const isStale = !isFinished && age >= STALE_TURNS
 
     const upNext = running && done + running < total ? 1 : 0
     const bar = barCells(Math.max(1, e.props.bodyColumns), total, done, running, upNext)
@@ -461,8 +515,8 @@ export const register: Register = (on, options) => {
           ) : (
             <Box flexDirection="row">
               <Text mono color={P.purple}>{'█'.repeat(bar.done)}</Text>
-              <Text mono color={P.pink}>{'█'.repeat(bar.run)}</Text>
-              <Text mono color={P.orange}>{'█'.repeat(bar.next)}</Text>
+              <Text mono color={P.pink}>{'▓'.repeat(bar.run)}</Text>
+              <Text mono color={P.orange}>{'▒'.repeat(bar.next)}</Text>
               <Text mono color={P.comment}>{'░'.repeat(bar.rest)}</Text>
             </Box>
           ))}
@@ -485,11 +539,15 @@ export const register: Register = (on, options) => {
         )}
         {total > 0 ? (
           <Box flexDirection="row">
-            <Text bold tabular color={isFinished ? P.green : P.purple}>{done}/{total} </Text>
-            <Text wrap="truncate-end" dimColor={isFinished}>
+            <Text bold tabular color={isFinished ? P.green : isStale ? P.comment : P.purple}>{done}/{total} </Text>
+            <Text wrap="truncate-end" dimColor={isFinished || isStale}>
               {isFinished ? '✓ all steps done' : current ? `▸ ${current.content}` : `${total - done} pending`}
             </Text>
-            {times.length > 0 && (
+            {isStale ? (
+              <Box flexShrink={0}>
+                <Text dimColor> · not updated for {age} turns</Text>
+              </Box>
+            ) : times.length > 0 && (
               <Box flexShrink={0}>
                 <Text dimColor> · {times.join(' · ')}</Text>
               </Box>
@@ -511,7 +569,15 @@ export const register: Register = (on, options) => {
     // A press is the person's own ask, so it may put the permission dialog up.
     const open = (id: string) => () =>
       void $.tool.call({ tool: OPEN_TOOL, session_id: id, target: 'focus' } as never).catch(() => undefined)
-    if (linked.length === 0) return <Text dimColor>No side sessions from this chat yet.</Text>
+    const allow = (await read($, needsAllow)) ? (
+      <Box flexDirection="column">
+        <Text dimColor>The session tools need your allow to list this chat's family.</Text>
+        <Button key="allow" label="Allow session tools" onPress={() => void refreshSides($, [], true)} />
+      </Box>
+    ) : null
+    if (linked.length === 0) {
+      return allow ?? <Text dimColor>No side sessions from this chat yet.</Text>
+    }
 
     const cards = linked.map(side => ({
       side,
@@ -529,6 +595,7 @@ export const register: Register = (on, options) => {
 
       return (
         <Box flexDirection="column" rowGap={1}>
+          {allow}
           {cards.map(({ side, card }) => (
             <Box key={side.id} flexDirection="column">
               <Svg
@@ -546,6 +613,7 @@ export const register: Register = (on, options) => {
 
     return (
       <Box flexDirection="column">
+        {allow}
         {cards.map(({ side, card }) => (
           <Box key={side.id} flexDirection="column">
             <Button key={`open-${side.id}`} plain onPress={open(side.id)}>
