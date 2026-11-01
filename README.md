@@ -2,6 +2,8 @@
 
 A Claude Code mod for long chats: a live progress band above the prompt and a panel of side sessions drawn as little crabs. Dracula by default, with ten more themes.
 
+![Progress band through a four-step task, from 0/4 to all steps done](docs/band.png)
+
 ![Side sessions panel](docs/panel.png)
 
 ## What it shows
