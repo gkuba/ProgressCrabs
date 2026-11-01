@@ -119,6 +119,7 @@ test('the side sessions panel shows a card per session and toasts a finish', asy
     return { value: undefined }
   })
   on('ui.open', () => ({ value: { isPlaced: true } }))
+  on('tool.check', () => ({ decision: 'allow' }))
   on('tool.call', (_, e) =>
     e.tool === 'mcp__ccd_session_mgmt__list_sessions'
       ? { result: [{ type: 'text', text: JSON.stringify([{ sessionId: 'local_c715bf35-ac66', title: 'Set up ComfyUI' }]) }] }
@@ -203,6 +204,7 @@ test('a side session shows the session that started it, and its finish', async (
   on('command.register', () => ({ value: { command: 'progress' } }))
   on('session.start', (_, e) => ({ cwd: e.cwd }))
   let isRunning = true
+  on('tool.check', () => ({ decision: 'allow' }))
   on('tool.call', (_, e) =>
     e.tool === 'mcp__ccd_session_mgmt__list_sessions'
       ? { result: [{ type: 'text', text: JSON.stringify([{ sessionId: 'local_b9c8', title: 'Fjord scene image refinement', isRunning }]) }] }

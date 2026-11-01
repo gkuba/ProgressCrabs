@@ -3,8 +3,13 @@ import type { EngineInterface, Register } from 'claude-code'
 
 import type { Activity, Side, Step } from '../types'
 import { CARD_H, MOOD, cardSvg, moodColor, moodOf } from './crabs'
+import { applyPlan, barCells, completeRunning, formatSpan, timing } from './plan'
+import type { PlanArgs } from './plan'
+import { latestStep, parseLinked, resultText, textOf } from './sides'
 import { DEFAULT_THEME, THEMES, isTheme, paletteOf } from './themes'
 import type { Overrides, Palette } from './themes'
+
+const PLUGIN = 'progress-crabs'
 
 // Change a tag when that value's fields change: it declines what an earlier
 // version stored, which outlives a reload.
@@ -12,99 +17,18 @@ const steps = atom({ plugin: 'progress-crabs', key: 'steps' } as const, [], { sh
 const sides = atom({ plugin: 'progress-crabs', key: 'sides' } as const, [], { shape: 'sides-2' })
 const activity = atom({ plugin: 'progress-crabs', key: 'activity' } as const, null as Activity | null, { shape: 'activity-1' })
 const isHidden = atom({ plugin: 'progress-crabs', key: 'isHidden' } as const, false)
-// Ticks while a step runs, so the elapsed time redraws on its own.
 // The theme `/progress theme` picked; null falls back to the settings' theme.
 const themeName = atom({ plugin: 'progress-crabs', key: 'theme' } as const, null as string | null)
+// Set once the person closes the side sessions panel, so it stops opening by itself.
+const isPaneDismissed = atom({ plugin: 'progress-crabs', key: 'isPaneDismissed' } as const, false)
+// Ticks while something works, and once a minute while side sessions sit idle,
+// so elapsed times redraw on their own.
 const clockNow = atom({ plugin: 'progress-crabs', key: 'now' } as const, 0)
 const TICK_MS = 5_000
 const FAMILY_MS = 30_000
 
 const PLAN_TOOL = 'mcp__ccd_turn__update_plan'
 const WRAP_TOOL = 'mcp__ccd_turn__wrap_up'
-const LINKED = /([\w.-]+) = (local_[0-9a-f-]+) \(([^)]+)\)/g
-
-type PlanArgs = {
-  items?: { content?: unknown; status?: unknown }[]
-  advance?: boolean
-  done?: number[]
-  start?: number
-}
-
-const toStatus = (s: unknown): Step['status'] =>
-  s === 'completed' || s === 'in_progress' ? s : 'pending'
-
-// Mirrors the app's own task-list semantics: items replace, advance completes
-// the running step and starts the next pending one, done/start are 1-based.
-const applyPlan = (list: Step[], args: PlanArgs, now: number): Step[] => {
-  // A replaced list keeps the times of steps it carries over by name.
-  const next: Step[] = Array.isArray(args.items)
-    ? args.items.map(item => {
-        const content = String(item.content ?? '')
-        const was = list.find(step => step.content === content)
-
-        return { ...was, content, status: toStatus(item.status) }
-      })
-    : list.map(step => ({ ...step }))
-
-  if (args.advance) {
-    const running = next.findIndex(step => step.status === 'in_progress')
-    if (running >= 0) next[running].status = 'completed'
-    const pending = next.findIndex((step, i) => i > running && step.status === 'pending')
-    if (pending >= 0) next[pending].status = 'in_progress'
-  }
-  for (const n of args.done ?? []) {
-    if (next[n - 1]) next[n - 1].status = 'completed'
-  }
-  if (typeof args.start === 'number' && next[args.start - 1]) {
-    next[args.start - 1].status = 'in_progress'
-  }
-
-  return stamp(next, now)
-}
-
-const stamp = (list: Step[], now: number): Step[] =>
-  list.map(step => {
-    if (step.status === 'in_progress') return { ...step, startedAt: step.startedAt ?? now, finishedAt: undefined }
-    if (step.status === 'completed') return { ...step, startedAt: step.startedAt ?? now, finishedAt: step.finishedAt ?? now }
-
-    return { content: step.content, status: step.status }
-  })
-
-const formatSpan = (ms: number) => {
-  const minutes = Math.round(ms / 60_000)
-  if (ms < 60_000) return `${Math.max(1, Math.round(ms / 1000))}s`
-  if (minutes < 60) return `${minutes}m`
-
-  return `${Math.floor(minutes / 60)}h ${String(minutes % 60).padStart(2, '0')}m`
-}
-
-// Elapsed time of the running step, and a rough estimate of what is left from
-// the average of the steps that ran for a measured time.
-const timing = (list: Step[], now: number) => {
-  const current = list.find(step => step.status === 'in_progress')
-  const elapsed = current?.startedAt !== undefined ? Math.max(0, now - current.startedAt) : null
-  const spans = list
-    .filter(step => step.status === 'completed' && step.startedAt !== undefined && step.finishedAt !== undefined)
-    .map(step => (step.finishedAt as number) - (step.startedAt as number))
-    .filter(span => span > 1000)
-  if (spans.length === 0) return { elapsed, left: null }
-
-  const average = spans.reduce((sum, span) => sum + span, 0) / spans.length
-  const pending = list.filter(step => step.status === 'pending').length
-  const left = pending * average + (current ? Math.max(0, average - (elapsed ?? 0)) : 0)
-
-  return { elapsed, left: pending || current ? left : null }
-}
-
-const textOf = (content: unknown): string => {
-  if (typeof content === 'string') return content
-  if (!Array.isArray(content)) return ''
-
-  return content
-    .map(block => (block && typeof block === 'object' && 'text' in block ? String(block.text) : ''))
-    .join('\n')
-}
-
 
 // A full-width pill: solid purple for finished steps, pink for the running one,
 // orange for the one up next, the rest an empty track. Percent lengths let the
@@ -123,7 +47,6 @@ ${seg(done, P.purple)}
 </svg>`
 }
 
-
 const ACTIVITY = {
   thinking: { label: 'thinking', role: 'pink' },
   writing: { label: 'writing', role: 'purple' },
@@ -133,12 +56,17 @@ const ACTIVITY = {
 // `mcp__server__tool` reads as `tool`.
 const shortTool = (name: string) => name.split('__').pop() ?? name
 
-// What the main loop is doing, for the working row. A mode is written only
-// when it changes, not per streamed piece.
-async function setMode($: EngineInterface, mode: Activity['mode'], tool?: string) {
+// What the main loop is doing, for the working row. `isTurnSure` is false
+// for a tool call, which may come from outside a turn: it changes a mode but
+// never starts one, so a stray call cannot leave the band "working".
+async function setMode($: EngineInterface, mode: Activity['mode'], tool?: string, isTurnSure = true) {
   const now = await $.clock.now()
   await update($, activity, was =>
-    was && was.mode === mode && was.tool === tool ? was : { mode, tool, since: was?.since ?? now },
+    !was && !isTurnSure
+      ? was
+      : was && was.mode === mode && was.tool === tool
+        ? was
+        : { mode, tool, since: was?.since ?? now },
   )
 }
 
@@ -149,98 +77,43 @@ const LIST_TOOL = 'mcp__ccd_session_mgmt__list_sessions'
 const EVENTS_TOOL = 'mcp__ccd_session_mgmt__list_events'
 const OPEN_TOOL = 'mcp__ccd_window__open_session_in'
 
-// An MCP tool's answer as text, however the result wraps it.
-const resultText = (r: unknown): string => {
-  if (typeof r === 'string') return r
-  if (Array.isArray(r)) return textOf(r)
-  if (r && typeof r === 'object' && 'content' in r) return resultText((r as { content: unknown }).content)
+// Tools a background call has already put to the permission decider once.
+const askedOnce = new Set<string>()
 
-  return ''
-}
+// A background call of the app's session tools. One the decision leaves to the
+// mode or the person is made once per session (so "always allow" can answer
+// it), then skipped: a timer never keeps putting a dialog in front of the person.
+async function quietCall($: EngineInterface, tool: string, args: Record<string, unknown>) {
+  const { decision } = await $.tool.check({ tool, input: args })
+  if (decision === 'deny' || (decision === 'ask' && askedOnce.has(tool))) throw new Error(`${tool}: ${decision}`)
+  if (decision === 'ask') askedOnce.add(tool)
+  const ran = await $.tool.call({ tool, ...args } as never)
 
-// The first line of the session's latest answer, markdown stripped.
-const latestStep = (transcript: string): string | undefined => {
-  const at = transcript.lastIndexOf('[assistant]')
-  if (at < 0) return undefined
-  const line = transcript
-    .slice(at + '[assistant]'.length)
-    .split('\n')
-    .map(l => l.trim())
-    .find(Boolean)
-
-  return line?.replace(/\*\*|`/g, '').replace(/^[-*] /, '')
+  return resultText('result' in ran ? ran.result : '')
 }
 
 type FamilyRow = { sessionId?: string; title?: string; name?: string; isRunning?: boolean; startedBy?: string }
 
-// The linked family as the app lists it: titles for every session, and the
-// sessions the "Linked sessions now" note leaves out (the one that started
-// this chat, and sessions further down), with their running state. Then the
-// latest step of the ones named, or of any whose state changed.
-async function refreshSides($: EngineInterface, stepsOf: string[]) {
-  let rows: FamilyRow[] = []
-  try {
-    const listed = await $.tool.call({ tool: LIST_TOOL, linked: true } as never)
-    rows = JSON.parse(resultText('result' in listed ? listed.result : '') || '[]') as FamilyRow[]
-  } catch {
-    // The panel falls back to the short names and the note's sessions.
-  }
-  const now = await $.clock.now()
-  const before = await read($, sides)
-  const fromNote = before.filter(side => !side.isListed)
-  const listed: Side[] = rows
-    .filter(row => row.sessionId && !fromNote.some(side => side.id === row.sessionId))
-    .map(row => {
-      const id = row.sessionId as string
-      const was = before.find(side => side.id === id)
-      const state = row.isRunning ? 'working' : 'idle'
-
-      return {
-        ...was,
-        id,
-        name: row.name ?? 'parent',
-        title: row.title ?? was?.title,
-        state,
-        isListed: true,
-        isParent: !row.startedBy,
-        since: was && was.state === state ? was.since : now,
-      }
-    })
-  for (const side of listed) {
-    const was = before.find(b => b.id === side.id)
-    if (was && moodOf(was.state) === 'working' && side.state === 'idle') $.ui.toast(`🦀 ${side.title ?? side.name} finished a turn`)
-  }
-  const ask = [...stepsOf, ...listed.filter(side => before.find(b => b.id === side.id)?.state !== side.state).map(side => side.id)]
-  const found = new Map<string, string>()
-  for (const id of ask) {
-    try {
-      const events = await $.tool.call({ tool: EVENTS_TOOL, session_id: id, limit: 3 } as never)
-      const step = latestStep(resultText('result' in events ? events.result : ''))
-      if (step) found.set(id, step)
-    } catch {
-      // Left without a step.
-    }
-  }
-  const titles = new Map(rows.filter(row => row.sessionId && row.title).map(row => [row.sessionId as string, row.title as string]))
-  const merged = await update($, sides, list =>
-    [...list.filter(side => !side.isListed), ...listed].map(side => ({
-      ...side,
-      title: titles.get(side.id) ?? side.title,
-      step: found.get(side.id) ?? side.step,
-    })),
-  )
-  if (before.length === 0 && merged.length > 0) await $.ui.open({ id: PANE, title: 'Side sessions' })
-}
+// The note's parse, read only from what the app or a plugin appended: never a
+// prompt the person typed or pasted, a tool's result or the model's own words.
+const isFromApp = (origin: { kind: string } | undefined) => !['composer', 'model', 'tool'].includes(origin?.kind ?? '')
 
 async function togglePane($: EngineInterface) {
   if ((await $.ui.panes()).some(pane => pane.id === PANE)) {
     await $.ui.close({ id: PANE })
+    await update($, isPaneDismissed, () => true)
 
     return false
   }
+  await update($, isPaneDismissed, () => false)
   await $.ui.open({ id: PANE, title: 'Side sessions' })
 
   return true
+}
+
+// Opens the panel the first time a side session appears, unless the person closed it.
+async function openPaneOnce($: EngineInterface) {
+  if (!(await read($, isPaneDismissed))) await $.ui.open({ id: PANE, title: 'Side sessions' })
 }
 
 // The colours to draw with: the picked theme, else the settings' one, with the settings' overrides on top.
@@ -252,6 +125,90 @@ const themeList = (current: string) =>
   Object.keys(THEMES)
     .map(name => `${name === current ? '▸' : ' '} ${name}`)
     .join('\n')
+
+// Whether the family has been read once; until then each tick tries again
+// (the app's tools may connect after the session starts).
+let isFamilyRead = false
+// One refresh at a time, so two never toast the same finish.
+let refreshing: Promise<void> = Promise.resolve()
+const resetFamily = () => {
+  isFamilyRead = false
+}
+
+// The linked family as the app lists it: titles for every session, and the
+// sessions the "Linked sessions now" note leaves out (the one that started
+// this chat, and sessions further down), with their running state. Then the
+// latest step of the ones named, or of any whose state changed.
+async function readFamily($: EngineInterface, stepsOf: string[]) {
+  let rows: FamilyRow[] | null = null
+  try {
+    const parsed: unknown = JSON.parse((await quietCall($, LIST_TOOL, { linked: true })) || '[]')
+    rows = Array.isArray(parsed) ? (parsed as FamilyRow[]) : []
+    isFamilyRead = true
+  } catch {
+    // The panel falls back to the short names and the note's sessions.
+  }
+  const now = await $.clock.now()
+  const before = await read($, sides)
+  const fromNote = before.filter(side => !side.isListed)
+  // A failed read keeps the cards it had rather than dropping them.
+  const listed: Side[] = rows === null
+    ? before.filter(side => side.isListed)
+    : rows
+        .filter(row => row.sessionId && !fromNote.some(side => side.id === row.sessionId))
+        .map(row => {
+          const id = row.sessionId as string
+          const was = before.find(side => side.id === id)
+          const state = row.isRunning ? 'working' : 'idle'
+
+          return {
+            ...was,
+            id,
+            name: row.name ?? 'parent',
+            title: row.title ?? was?.title,
+            state,
+            isListed: true,
+            isParent: !row.startedBy,
+            since: was && was.state === state ? was.since : now,
+          }
+        })
+  for (const side of listed) {
+    const was = before.find(b => b.id === side.id)
+    if (was && moodOf(was.state) === 'working' && side.state === 'idle') $.ui.toast(`🦀 ${side.title ?? side.name} finished a turn`)
+  }
+  const changed = listed.filter(side => before.find(b => b.id === side.id)?.state !== side.state).map(side => side.id)
+  const found = new Map<string, string>()
+  for (const id of new Set([...stepsOf, ...changed])) {
+    try {
+      const step = latestStep(await quietCall($, EVENTS_TOOL, { session_id: id, limit: 3 }))
+      if (step) found.set(id, step)
+    } catch {
+      // Left without a step.
+    }
+  }
+  const titles = new Map((rows ?? []).filter(row => row.sessionId && row.title).map(row => [row.sessionId as string, row.title as string]))
+  const merged = await update($, sides, list =>
+    [...list.filter(side => !side.isListed), ...listed].map(side => ({
+      ...side,
+      title: titles.get(side.id) ?? side.title,
+      step: found.get(side.id) ?? side.step,
+    })),
+  )
+  if (before.length === 0 && merged.length > 0) await openPaneOnce($)
+}
+
+function refreshSides($: EngineInterface, stepsOf: string[]) {
+  refreshing = refreshing.then(() => readFamily($, stepsOf)).catch(() => undefined)
+
+  return refreshing
+}
+
+const USAGE = [
+  '/progress            show or hide the band',
+  '/progress show|hide  show or hide it',
+  '/progress theme      list the colour themes',
+  '/progress theme <name>|default',
+].join('\n')
 
 export const register: Register = (on, options) => {
   const fromSettings = isTheme(options.theme) ? options.theme : DEFAULT_THEME
@@ -266,40 +223,58 @@ export const register: Register = (on, options) => {
     await $.command.register({
       name: 'progress',
       description: 'Show or hide the task progress band; `theme` lists or switches colour themes',
-      argumentHint: '[theme [name|default]]',
+      argumentHint: '[show|hide|theme [name|default]]',
     })
     await $.command.register({
       name: 'crabs',
       description: 'Show or hide the side sessions panel',
     })
+    // A theme picked with /progress lasts until the settings' theme changes.
+    const settingsWas = await $.store.get('settingsTheme').catch(() => undefined)
+    if (settingsWas !== undefined && settingsWas !== fromSettings) await $.store.delete('theme').catch(() => undefined)
+    if (settingsWas !== fromSettings) await $.store.set('settingsTheme', fromSettings).catch(() => undefined)
     const saved = await $.store.get('theme').catch(() => undefined)
-    if (isTheme(saved)) await update($, themeName, () => saved)
+    await update($, themeName, () => (isTheme(saved) ? saved : null))
     // The family the note leaves out (this chat's parent above all) is read
-    // from the app's list: once now, then every 30 seconds while there is one.
-    void refreshSides($, []).catch(() => undefined)
+    // from the app's list: now, then every 30 seconds while there is one, or
+    // until a first read goes through.
+    void refreshSides($, [])
     $.clock.every(FAMILY_MS, async () => {
-      if ((await read($, sides)).length > 0) await refreshSides($, []).catch(() => undefined)
+      if (!isFamilyRead || (await read($, sides)).length > 0) await refreshSides($, [])
     })
     const startedAt = await $.clock.now()
     await update($, clockNow, () => startedAt)
     $.clock.every(TICK_MS, async () => {
       const list = await read($, steps)
       const linked = await read($, sides)
-      if (
-        (await read($, activity)) ||
+      const now = await $.clock.now()
+      const was = await read($, clockNow)
+      const isBusy =
+        (await read($, activity)) !== null ||
         list.some(step => step.status === 'in_progress') ||
         linked.some(side => moodOf(side.state) === 'working')
-      ) {
-        const now = await $.clock.now()
-        await update($, clockNow, () => now)
-      }
+      const isNewMinute = linked.length > 0 && Math.floor(now / 60_000) !== Math.floor(was / 60_000)
+      if (isBusy || isNewMinute) await update($, clockNow, () => now)
     })
 
     return next(e)
   })
 
+  // A /clear starts a new conversation in the same process: its task list and
+  // family are not this one's.
+  on('session.end', async ($, e, next) => {
+    if (e.reason === 'clear') {
+      await update($, steps, () => [])
+      await update($, sides, () => [])
+      await update($, activity, () => null)
+      resetFamily()
+    }
+
+    return next(e)
+  })
+
   on('command.run', { command: 'progress' }, async ($, e) => {
-    const [verb, name] = e.args.trim().toLowerCase().split(/\s+/)
+    const [verb = '', name] = e.args.trim().toLowerCase().split(/\s+/)
     if (verb === 'theme' || verb === 'themes') {
       if (!name) {
         const current = (await read($, themeName)) ?? fromSettings
@@ -313,9 +288,11 @@ export const register: Register = (on, options) => {
       if (!isTheme(name)) return { text: `No theme "${name}". Themes:\n${themeList('')}` }
       await $.store.set('theme', name)
       await update($, themeName, () => name)
-      return { text: `Theme: ${name}.` }
+      return { text: `Theme: ${name}. Changing the theme in the settings replaces it.` }
     }
-    const hidden = await update($, isHidden, was => !was)
+    if (verb !== '' && !['show', 'on', 'hide', 'off'].includes(verb)) return { text: `Unknown "${verb}". Usage:\n${USAGE}` }
+
+    const hidden = await update($, isHidden, was => (verb === '' ? !was : verb === 'hide' || verb === 'off'))
 
     return { text: hidden ? 'Task progress band hidden. Run /progress to show it again.' : 'Task progress band shown.' }
   })
@@ -326,9 +303,17 @@ export const register: Register = (on, options) => {
     return { text: isOpen ? 'Side sessions panel open.' : 'Side sessions panel closed.' }
   })
 
+  on('ui.close', async ($, e, next) => {
+    if (e.id === PANE && e.origin.kind === 'person') await update($, isPaneDismissed, () => true)
+
+    return next(e)
+  })
+
+  const wentThrough = (ran: object) => !('deny' in ran && ran.deny) && !('isError' in ran && ran.isError)
+
   on('tool.call', { tool: PLAN_TOOL }, async ($, e, next) => {
     const ran = await next(e)
-    if (!e.agentId && !('deny' in ran && ran.deny) && !ran.isError) {
+    if (!e.agentId && wentThrough(ran)) {
       const now = await $.clock.now()
       await update($, steps, list => applyPlan(list, e as unknown as PlanArgs, now))
       await update($, clockNow, () => now)
@@ -339,11 +324,9 @@ export const register: Register = (on, options) => {
 
   on('tool.call', { tool: WRAP_TOOL }, async ($, e, next) => {
     const ran = await next(e)
-    if (!e.agentId) {
+    if (!e.agentId && wentThrough(ran)) {
       const now = await $.clock.now()
-      await update($, steps, list =>
-        stamp(list.map(step => (step.status === 'in_progress' ? { ...step, status: 'completed' } : step)), now),
-      )
+      await update($, steps, list => completeRunning(list, now))
     }
 
     return ran
@@ -355,6 +338,9 @@ export const register: Register = (on, options) => {
       const now = await $.clock.now()
       await update($, activity, () => ({ mode: 'thinking', since: now }))
       await update($, clockNow, () => now)
+      // A list finished in an earlier turn makes way for the next one.
+      await update($, steps, list => (list.length > 0 && list.every(step => step.status === 'completed') ? [] : list))
+      if (!isFamilyRead) void refreshSides($, [])
     }
 
     return started
@@ -366,27 +352,35 @@ export const register: Register = (on, options) => {
     await setMode($, 'thinking')
     const stream = next(e)
     let mode: Activity['mode'] = 'thinking'
+    let tool: string | undefined
     while (true) {
       const piece = await stream.next()
       if (piece.done) return piece.value
       const chunk = piece.value
       const now: Activity['mode'] | null =
         chunk.kind === 'thinking' ? 'thinking' : chunk.kind === 'text' ? 'writing' : chunk.kind === 'tool' ? 'tool' : null
-      if (now && (now !== mode || chunk.kind === 'tool')) {
+      const name = chunk.kind === 'tool' ? shortTool(chunk.name) : undefined
+      // Written only when the mode or the tool changes, not per streamed piece.
+      if (now && (now !== mode || name !== tool)) {
         mode = now
-        await setMode($, now, chunk.kind === 'tool' ? shortTool(chunk.name) : undefined)
+        tool = name
+        await setMode($, now, name)
       }
       yield chunk
     }
   })
 
   on('tool.call', async ($, e, next) => {
-    if (e.agentId) return next(e)
-    await setMode($, 'tool', shortTool(e.tool))
-    const ran = await next(e)
-    await setMode($, 'thinking')
-
-    return ran
+    // The mod's own background calls are not Claude at work.
+    if (e.agentId || next.origin.plugin === PLUGIN) return next(e)
+    const tool = shortTool(e.tool)
+    await setMode($, 'tool', tool, false)
+    try {
+      return await next(e)
+    } finally {
+      // Back to thinking, unless a call that ran beside this one took the row.
+      await update($, activity, was => (was && was.mode === 'tool' && was.tool === tool ? { ...was, mode: 'thinking' as const, tool: undefined } : was))
+    }
   })
 
   on('turn.complete', async ($, e, next) => {
@@ -398,33 +392,28 @@ export const register: Register = (on, options) => {
 
   // The app's "Linked sessions now" reminder carries each side session's state.
   on('session.append', async ($, e, next) => {
-    if (!e.agentId) {
-      const text = textOf(e.message.content)
-      const at = text.indexOf('Linked sessions now')
-      if (at >= 0) {
-        const line = text.slice(at).split('\n')[0]
-        const now = await $.clock.now()
-        const before = await read($, sides)
-        const found: Side[] = [...line.matchAll(LINKED)].map(m => {
-          const was = before.find(side => side.id === m[2])
-          const state = m[3]
+    const found = !e.agentId && isFromApp(e.origin) ? parseLinked(textOf(e.message.content)) : null
+    if (found) {
+      const now = await $.clock.now()
+      const before = await read($, sides)
+      const noted: Side[] = found.map(({ name, id, state }) => {
+        const was = before.find(side => side.id === id)
 
-          return { ...was, name: m[1], id: m[2], state, since: was && was.state === state ? was.since : now }
-        })
-        await update($, sides, list => [...found, ...list.filter(side => side.isListed && !found.some(f => f.id === side.id))])
+        return { ...was, name, id, state, isListed: false, since: was && was.state === state ? was.since : now }
+      })
+      await update($, sides, list => [...noted, ...list.filter(side => side.isListed && !noted.some(f => f.id === side.id))])
 
-        // A toast when a session finishes a turn or starts waiting on the person.
-        const changed = found.filter(side => before.find(b => b.id === side.id)?.state !== side.state)
-        for (const side of changed) {
-          const was = before.find(b => b.id === side.id)
-          const mood = moodOf(side.state)
-          if (mood === 'waiting') $.ui.toast(`🦀 ${side.title ?? side.name} is waiting on you`)
-          else if (was && moodOf(was.state) === 'working') $.ui.toast(`🦀 ${side.title ?? side.name} finished a turn`)
-        }
-        if (found.length > 0 && before.length === 0) void $.ui.open({ id: PANE, title: 'Side sessions' }).catch(() => undefined)
-        const stale = found.filter(side => !side.title || changed.includes(side)).map(side => side.id)
-        if (stale.length > 0) void refreshSides($, stale).catch(() => undefined)
+      // A toast when a session finishes a turn or starts waiting on the person.
+      const changed = noted.filter(side => before.find(b => b.id === side.id)?.state !== side.state)
+      for (const side of changed) {
+        const was = before.find(b => b.id === side.id)
+        const mood = moodOf(side.state)
+        if (mood === 'waiting') $.ui.toast(`🦀 ${side.title ?? side.name} is waiting on you`)
+        else if (was && moodOf(was.state) === 'working') $.ui.toast(`🦀 ${side.title ?? side.name} finished a turn`)
       }
+      if (noted.length > 0 && before.length === 0) void openPaneOnce($).catch(() => undefined)
+      const stale = noted.filter(side => !side.title || changed.includes(side)).map(side => side.id)
+      if (stale.length > 0) void refreshSides($, stale)
     }
 
     return next(e)
@@ -450,12 +439,7 @@ export const register: Register = (on, options) => {
     const isFinished = total > 0 && done === total
 
     const upNext = running && done + running < total ? 1 : 0
-    const cells = Math.max(10, e.props.bodyColumns)
-    const cellsFor = (n: number) => (total ? Math.round((n / total) * cells) : 0)
-    const doneCells = cellsFor(done)
-    const runCells = running ? Math.max(1, cellsFor(done + running) - doneCells) : 0
-    const nextCells = upNext ? Math.max(1, cellsFor(done + running + upNext) - doneCells - runCells) : 0
-    const restCells = Math.max(0, cells - doneCells - runCells - nextCells)
+    const bar = barCells(Math.max(1, e.props.bodyColumns), total, done, running, upNext)
     const clock = await read($, clockNow)
     const { elapsed, left } = timing(list, clock)
     const look = doing ? ACTIVITY[doing.mode] : null
@@ -476,10 +460,10 @@ export const register: Register = (on, options) => {
             <Svg alt={`${done} of ${total} steps done`} height={10} source={pillSvg(P, 10, total, done, running, upNext)} />
           ) : (
             <Box flexDirection="row">
-              <Text mono color={P.purple}>{'█'.repeat(doneCells)}</Text>
-              <Text mono color={P.pink}>{'█'.repeat(runCells)}</Text>
-              <Text mono color={P.orange}>{'█'.repeat(nextCells)}</Text>
-              <Text mono color={P.comment}>{'░'.repeat(restCells)}</Text>
+              <Text mono color={P.purple}>{'█'.repeat(bar.done)}</Text>
+              <Text mono color={P.pink}>{'█'.repeat(bar.run)}</Text>
+              <Text mono color={P.orange}>{'█'.repeat(bar.next)}</Text>
+              <Text mono color={P.comment}>{'░'.repeat(bar.rest)}</Text>
             </Box>
           ))}
         {(working || linked.length > 0) && (
@@ -524,6 +508,7 @@ export const register: Register = (on, options) => {
     const P = await paletteNow($, fromSettings, over)
     const linked = await read($, sides)
     const now = await read($, clockNow)
+    // A press is the person's own ask, so it may put the permission dialog up.
     const open = (id: string) => () =>
       void $.tool.call({ tool: OPEN_TOOL, session_id: id, target: 'focus' } as never).catch(() => undefined)
     if (linked.length === 0) return <Text dimColor>No side sessions from this chat yet.</Text>

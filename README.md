@@ -36,9 +36,10 @@ claude plugin install progress-crabs@progress-crabs
 
 ## Use
 
-- `/progress` hides or shows the band for the session.
+- `/progress` hides or shows the band for the session; `/progress show` and `/progress hide` set it either way. Anything else prints the usage.
 - `/progress theme [name]` lists or switches colour themes (see Themes).
-- `/crabs` shows or hides the side sessions panel (it opens by itself the first time a side session appears).
+- `/crabs` shows or hides the side sessions panel (it opens by itself the first time a side session appears; once you close it, it stays closed until `/crabs`).
+- The panel reads the app's session list in the background. If your permission mode asks before those tools run, it asks once per session; answer "always allow" to keep the panel current, or decline and it falls back to the app's note.
 - Turn it off: `claude plugin disable progress-crabs@progress-crabs`. Remove it: `claude plugin uninstall progress-crabs@progress-crabs`.
 
 ## Themes
@@ -65,7 +66,7 @@ echo '{"theme":"nord","done_color":"#88c0d0","crab_color":"#d08770"}' | claude p
 
 They are stored in `~/.claude/settings.json` under `pluginConfigs`.
 
-A theme picked with `/progress theme` wins over the settings' theme; the hex colours apply on top of either.
+A theme picked with `/progress theme` wins over the settings' theme until you change the settings' theme, which then takes over; the hex colours apply on top of either.
 
 ### Edit or add a theme
 

@@ -1,5 +1,9 @@
 # progress-crabs
 
+```
+/plugin install progress-crabs --marketplace gkuba/ProgressCrabs
+```
+
 A compact band above the prompt that shows where a long chat stands:
 
 - **Task bar**: the chat's task list as a full-width pill in the current theme on its own row (purple = done, pink = in progress, orange = up next, slate = rest; block characters in a terminal), `done/total`, the current step and its times, on the row below.
@@ -11,14 +15,14 @@ It reads the desktop app's task-list tool (`mcp__ccd_turn__update_plan` / `wrap_
 
 ## Side sessions panel
 
-A pane with one card per side session started from this chat: a pixel crab, the session's title, its state and how long it has been in it, and the first line of its latest answer. The crab walks while the session works, raises its claws with a pink `?` when it waits on you, shows a green check when done, and sits grey when idle (no motion under reduced-motion settings). A toast pops when a session finishes a turn or starts waiting. `Open … ↗` under a card switches to that session. In a side session the chat that started it gets a card too, marked `↑`, its state read from the app's session list every 30 seconds. It opens by itself the first time a side session appears; `/crabs` shows or hides it. Crab animation approach after savvy-progress (MIT); the sprite is this mod's own.
+A pane with one card per side session started from this chat: a pixel crab, the session's title, its state and how long it has been in it, and the first line of its latest answer. The crab walks while the session works, raises its claws with a pink `?` when it waits on you, shows a green check when done, and sits grey when idle (no motion under reduced-motion settings). A toast pops when a session finishes a turn or starts waiting. `Open … ↗` under a card switches to that session. In a side session the chat that started it gets a card too, marked `↑`, its state read from the app's session list every 30 seconds. It opens by itself the first time a side session appears; `/crabs` shows or hides it; closed by hand, it stays closed until `/crabs`. Its background reads of the app's session tools ask at most once per session when your permission mode asks. Crab animation approach after savvy-progress (MIT); the sprite is this mod's own.
 
 ## Themes
 
-`/progress theme` lists the themes (Dracula default, Tokyo Night, Nord, GitHub, GitHub Light, Gruvbox, One Dark, Catppuccin Latte/Frappé/Macchiato/Mocha); `/progress theme <name>` switches and saves it; `/progress theme default` goes back to the settings. Settings (`/plugin configure progress-crabs@progress-crabs`): a theme picker plus optional hex colours for done, current, next and the crab. Palettes live in `hooks/themes.ts`.
+`/progress theme` lists the themes (Dracula default, Tokyo Night, Nord, GitHub, GitHub Light, Gruvbox, One Dark, Catppuccin Latte/Frappé/Macchiato/Mocha); `/progress theme <name>` switches and saves it; `/progress theme default` goes back to the settings, and so does changing the settings' theme. Settings (`/plugin configure progress-crabs@progress-crabs`): a theme picker plus optional hex colours for done, current, next and the crab. Palettes live in `hooks/themes.ts`.
 
 ## Toggle
 
-- `/progress` hides or shows the band for the session.
+- `/progress` hides or shows the band for the session; `/progress show` / `/progress hide` set it.
 - The band's own `[-]` (or ctrl+x ctrl+a) collapses it.
 - To turn it off everywhere: `claude plugin disable progress-crabs@progress-crabs`; to remove it: `claude plugin uninstall progress-crabs@progress-crabs`.

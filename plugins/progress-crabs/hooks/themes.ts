@@ -78,10 +78,11 @@ export const DEFAULT_THEME: ThemeName = 'dracula'
 
 export const isTheme = (name: unknown): name is ThemeName => typeof name === 'string' && name in THEMES
 
-// The settings' colour fields, laid over the theme. A blank or malformed hex is ignored.
+// The settings' colour fields, laid over the theme. A blank or malformed hex is
+// ignored, and so is one with alpha, which terminal colours cannot draw.
 export type Overrides = { done?: string; current?: string; next?: string; crab?: string }
 
-const hex = (s: unknown) => (typeof s === 'string' && /^#(?:[0-9a-f]{3}|[0-9a-f]{6}|[0-9a-f]{8})$/i.test(s.trim()) ? s.trim() : undefined)
+const hex = (s: unknown) => (typeof s === 'string' && /^#(?:[0-9a-f]{3}|[0-9a-f]{6})$/i.test(s.trim()) ? s.trim() : undefined)
 
 export const paletteOf = (name: unknown, over: Overrides = {}): Palette => {
   const base: Palette = THEMES[isTheme(name) ? name : DEFAULT_THEME]

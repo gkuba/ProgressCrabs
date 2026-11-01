@@ -19,6 +19,7 @@ declare module 'claude-code' {
       activity: Shaped<Activity | null>
       now: number
       isHidden: boolean
+      isPaneDismissed: boolean
     }
   }
 }
