@@ -8,9 +8,9 @@ A Claude Code mod for long chats: a live progress band above the prompt and a pa
 
 - **Progress bar**: the chat's task list as a full-width pill. In Dracula: purple = done, pink = in progress, orange = up next, slate = the rest.
 - **Working row**: what Claude is doing right now and for how long: `thinking · 42s`, `running Bash · 1m`, `writing · 2m`. Shows in any chat, task list or not.
-- **Steps and time**: `done/total`, the current step, how long it has run and `~Nm left (rough)` from the average finished step.
+- **Steps and time**: `done/total`, the current step, how long it has run and `~Nm left` from the finished steps (the latest weigh most; shown once two have finished and their times agree). A finished list turns green with its total time. In a short or narrow window it folds into one row.
 - **Side sessions**: each session started from this chat, by title, with its state.
-- **Crab panel**: one card per side session, and in a side session one for the chat that started it (marked `↑` when the app's list makes it certain, read every 30 seconds). Idle times count from the session's last activity; archived sessions drop off. The crab walks while it works, raises its claws with a `?` when it waits on you, shows a check when done. A toast pops when one finishes a turn or starts waiting; `Open ↗` switches to it.
+- **Crab panel**: one card per side session, and in a side session one for the chat that started it (marked `↑` when the app's list makes it certain, read every 10 seconds while any session works, every minute when all are idle). Idle times count from the session's last activity; archived sessions drop off. Sessions that need you sit at the top. The crab walks while it works, raises its claws with a `?` when it waits on you, shows a check when done. A toast pops when one finishes a turn or starts waiting; `Open ↗` switches to it.
 
 Works on the desktop app (drawn as SVG) and in the terminal (block characters). Animation stops under reduced-motion settings.
 
@@ -46,7 +46,7 @@ claude plugin install progress-crabs@progress-crabs
 
 `dracula` (default), `tokyo-night`, `nord`, `github`, `github-light`, `gruvbox`, `one-dark`, `catppuccin-latte`, `catppuccin-frappe`, `catppuccin-macchiato`, `catppuccin-mocha`.
 
-- `/progress theme` lists them and marks the current one.
+- `/progress theme` lists them, marks the current one and opens a **Themes** panel with each theme's colours; click one to switch.
 - `/progress theme <name>` switches straight away. The choice is saved and carries into new chats.
 - `/progress theme default` goes back to the theme in your settings.
 

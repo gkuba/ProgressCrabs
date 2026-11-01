@@ -18,12 +18,19 @@ export const moodOf = (state: string): Mood =>
 
 export const MOOD = {
   working: { label: 'working', role: 'orange' },
-  waiting: { label: 'waiting on you', role: 'pink' },
+  waiting: { label: 'needs you', role: 'pink' },
   done: { label: 'done', role: 'green' },
   idle: { label: 'idle', role: 'comment' },
 } as const
 
 export const moodColor = (P: Palette, mood: Mood) => P[MOOD[mood].role]
+
+// Sessions waiting on the person first, then working ones, then the rest; the
+// order within each kept.
+const RANK: Record<Mood, number> = { waiting: 0, working: 1, done: 2, idle: 3 }
+
+export const byUrgency = <T extends { state: string }>(list: readonly T[]) =>
+  [...list].sort((a, b) => RANK[moodOf(a.state)] - RANK[moodOf(b.state)])
 
 const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
 
@@ -87,7 +94,7 @@ export const cardSvg = (P: Palette, W: number, c: Card) => {
   const state = [m.label, c.elapsed].filter(Boolean).join(' · ')
 
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${CARD_H}" viewBox="0 0 ${W} ${CARD_H}">${CSS}
-<rect x="0.5" y="0.5" width="${W - 1}" height="${CARD_H - 1}" rx="10" fill="${P.line}" fill-opacity="0.35" stroke="${m.color}" stroke-opacity="0.6"/>
+<rect x="0.5" y="0.5" width="${W - 1}" height="${CARD_H - 1}" rx="10" fill="${P.line}" fill-opacity="0.35" stroke="${m.color}" stroke-opacity="${c.mood === 'waiting' ? 1 : 0.6}" stroke-width="${c.mood === 'waiting' ? 2 : 1}"/>
 ${crab(P, 10, 14, c.mood)}${badge(P, 50, 12, c.mood)}
 <g font-family="sans-serif" font-size="12">
 <text x="62" y="20" font-weight="600" fill="${P.purple}">${esc(clip(c.title, chars))}</text>

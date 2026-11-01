@@ -79,9 +79,13 @@ export const formatSpan = (ms: number) => {
 
 // How much each newer step's span moves the estimate.
 const RECENT_WEIGHT = 0.4
+// Step times whose spread passes this share of their mean give no estimate.
+const MAX_SPREAD = 1
+const SPREAD_OF = 4
 
-// Elapsed time of the running step, and a rough estimate of what is left from
-// the steps that ran for a measured time, the latest weighing most.
+// Elapsed time of the running step, and an estimate of what is left from the
+// steps that ran for a measured time, the latest weighing most. No estimate
+// until two steps were timed, nor while their times spread too wide to guess from.
 export const timing = (list: Step[], now: number) => {
   const current = list.find(step => step.status === 'in_progress')
   const elapsed = current?.startedAt !== undefined ? Math.max(0, now - current.startedAt) : null
@@ -91,13 +95,26 @@ export const timing = (list: Step[], now: number) => {
     .map(step => (step.finishedAt as number) - (step.startedAt as number))
     .filter(span => span > 1000)
   const [first, ...later] = spans
-  if (first === undefined) return { elapsed, left: null }
+  if (first === undefined || later.length === 0) return { elapsed, left: null }
+  // The spread of the latest few, so one slow step early on stops counting.
+  const recent = spans.slice(-SPREAD_OF)
+  const mean = recent.reduce((sum, span) => sum + span, 0) / recent.length
+  const spread = Math.sqrt(recent.reduce((sum, span) => sum + (span - mean) ** 2, 0) / recent.length)
+  if (spread > MAX_SPREAD * mean) return { elapsed, left: null }
 
   const average = later.reduce((avg, span) => RECENT_WEIGHT * span + (1 - RECENT_WEIGHT) * avg, first)
   const pending = list.filter(step => step.status === 'pending').length
   const left = pending * average + (current ? Math.max(0, average - (elapsed ?? 0)) : 0)
 
   return { elapsed, left: pending || current ? left : null }
+}
+
+// How long a whole list took, first start to last finish.
+export const listSpan = (list: Step[]) => {
+  const starts = list.flatMap(step => (step.startedAt === undefined ? [] : [step.startedAt]))
+  const ends = list.flatMap(step => (step.finishedAt === undefined ? [] : [step.finishedAt]))
+
+  return starts.length > 0 && ends.length > 0 ? Math.max(...ends) - Math.min(...starts) : null
 }
 
 // The bar's cells for done, running, up next and the rest, summing to `cells`

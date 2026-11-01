@@ -8,6 +8,8 @@
 //   line    the crab card's fill
 //   bg      the crab's eyes and mouth, the "?" on a waiting badge
 // To add a theme, add an entry here; `/progress theme` lists it at once.
+// On a light background the roles keep 3:1 contrast or better, so some of
+// Latte's and GitHub Light's shades are a little darker than the originals.
 
 export type Palette = {
   bg: string
@@ -43,7 +45,7 @@ export const THEMES = {
     orange: '#db6d28', pink: '#db61a2', purple: '#a371f7', red: '#f85149', yellow: '#d29922',
   },
   'github-light': {
-    bg: '#ffffff', line: '#eaeef2', fg: '#1f2328', comment: '#8c959f', cyan: '#1b7c83', green: '#1a7f37',
+    bg: '#ffffff', line: '#eaeef2', fg: '#1f2328', comment: '#6e7781', cyan: '#1b7c83', green: '#1a7f37',
     orange: '#bc4c00', pink: '#bf3989', purple: '#8250df', red: '#cf222e', yellow: '#9a6700',
   },
   gruvbox: {
@@ -55,8 +57,8 @@ export const THEMES = {
     orange: '#d19a66', pink: '#c678dd', purple: '#61afef', red: '#e06c75', yellow: '#e5c07b',
   },
   'catppuccin-latte': {
-    bg: '#eff1f5', line: '#ccd0da', fg: '#4c4f69', comment: '#9ca0b0', cyan: '#04a5e5', green: '#40a02b',
-    orange: '#fe640b', pink: '#ea76cb', purple: '#8839ef', red: '#d20f39', yellow: '#df8e1d',
+    bg: '#eff1f5', line: '#ccd0da', fg: '#4c4f69', comment: '#7c7f93', cyan: '#04a5e5', green: '#3c9628',
+    orange: '#e0580a', pink: '#c262a8', purple: '#8839ef', red: '#d20f39', yellow: '#df8e1d',
   },
   'catppuccin-frappe': {
     bg: '#303446', line: '#414559', fg: '#c6d0f5', comment: '#737994', cyan: '#99d1db', green: '#a6d189',
@@ -94,4 +96,19 @@ export const paletteOf = (name: unknown, over: Overrides = {}): Palette => {
     orange: hex(over.next) ?? base.orange,
     crab: hex(over.crab) ?? base.crab,
   }
+}
+
+// WCAG contrast of two `#rrggbb` colours, 1 to 21.
+const luminance = (hex: string) => {
+  const [r = 0, g = 0, b = 0] = [1, 3, 5]
+    .map(i => parseInt(hex.slice(i, i + 2), 16) / 255)
+    .map(v => (v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4))
+
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b
+}
+
+export const contrast = (a: string, b: string) => {
+  const [hi, lo] = [luminance(a), luminance(b)].sort((x, y) => y - x) as [number, number]
+
+  return (hi + 0.05) / (lo + 0.05)
 }

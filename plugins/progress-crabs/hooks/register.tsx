@@ -2,8 +2,8 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
 import type { Activity, Side, Step } from '../types'
-import { CARD_H, MOOD, cardSvg, moodColor, moodOf } from './crabs'
-import { applyPlan, barCells, completeRunning, formatSpan, timing } from './plan'
+import { CARD_H, MOOD, byUrgency, cardSvg, moodColor, moodOf } from './crabs'
+import { applyPlan, barCells, completeRunning, formatSpan, listSpan, timing } from './plan'
 import type { PlanArgs } from './plan'
 import { idleSince, latestStep, parentOf, parseLinked, resultText, textOf } from './sides'
 import type { FamilyRow } from './sides'
@@ -31,7 +31,11 @@ const needsAllow = atom({ plugin: 'progress-crabs', key: 'needsAllow' } as const
 const planAge = atom({ plugin: 'progress-crabs', key: 'planAge' } as const, 0)
 const STALE_TURNS = 3
 const TICK_MS = 5_000
-const FAMILY_MS = 30_000
+// The family is read this often while one of it works, and less often while all sit idle.
+const FAMILY_FAST_MS = 10_000
+const FAMILY_SLOW_MS = 60_000
+// Under this many cells, or with fewer rows than the full band needs, it folds into one row.
+const COMPACT_COLUMNS = 40
 
 const PLAN_TOOL = 'mcp__ccd_turn__update_plan'
 const WRAP_TOOL = 'mcp__ccd_turn__wrap_up'
@@ -40,6 +44,7 @@ const WRAP_TOOL = 'mcp__ccd_turn__wrap_up'
 // orange for the one up next, the rest an empty track. Percent lengths let the
 // frame's own width decide the size.
 const pillSvg = (P: Palette, height: number, total: number, done: number, running: number, upNext: number) => {
+  const doneFill = done === total ? P.green : P.purple
   const r = height / 2
   const pct = (n: number) => `${((n / total) * 100).toFixed(2)}%`
   const seg = (n: number, fill: string) =>
@@ -49,7 +54,7 @@ const pillSvg = (P: Palette, height: number, total: number, done: number, runnin
 <rect x="0" y="0" width="100%" height="${height}" rx="${r}" fill="${P.comment}" fill-opacity="0.3"/>
 ${seg(done + running + upNext, P.orange)}
 ${seg(done + running, P.pink)}
-${seg(done, P.purple)}
+${seg(done, doneFill)}
 </svg>`
 }
 
@@ -126,6 +131,15 @@ async function paletteNow($: EngineInterface, fallback: string, over: Overrides)
   return paletteOf((await read($, themeName)) ?? fallback, over)
 }
 
+// Picks a theme, or the settings' one for null.
+async function setTheme($: EngineInterface, name: string | null) {
+  if (name === null) await $.store.delete('theme')
+  else await $.store.set('theme', name)
+  await update($, themeName, () => name)
+}
+
+const THEME_PANE = 'themes'
+
 const themeList = (current: string) =>
   Object.keys(THEMES)
     .map(name => `${name === current ? '▸' : ' '} ${name}`)
@@ -134,6 +148,8 @@ const themeList = (current: string) =>
 // Whether the family has been read once; until then each tick tries again
 // (the app's tools may connect after the session starts).
 let isFamilyRead = false
+// When the last family read began, for the timer's pace.
+let lastFamilyAt = 0
 // One read at a time, so two never toast the same finish; asks made while one
 // runs fold into a single read after it.
 let queued: Set<string> | null = null
@@ -141,6 +157,7 @@ let queuedAsk = false
 let running: Promise<void> | null = null
 const resetFamily = () => {
   isFamilyRead = false
+  lastFamilyAt = 0
 }
 
 // The linked family as the app lists it: titles for every session, and the
@@ -149,6 +166,7 @@ const resetFamily = () => {
 // latest step of the ones named, or of any whose state changed.
 async function readFamily($: EngineInterface, stepsOf: string[], mayAsk = false) {
   let rows: FamilyRow[] | null = null
+  lastFamilyAt = await $.clock.now()
   try {
     const parsed: unknown = JSON.parse((await quietCall($, LIST_TOOL, { linked: true }, mayAsk)) || '[]')
     rows = Array.isArray(parsed) ? (parsed as FamilyRow[]).filter(row => row.sessionId && !row.isArchived) : []
@@ -268,11 +286,14 @@ export const register: Register = (on, options) => {
     const saved = await $.store.get('theme').catch(() => undefined)
     await update($, themeName, () => (isTheme(saved) ? saved : null))
     // The family the note leaves out (this chat's parent above all) is read
-    // from the app's list: now, then every 30 seconds while there is one, or
-    // until a first read goes through.
+    // from the app's list: now, then every 10 seconds while one of it works and
+    // every minute while all sit idle, or until a first read goes through.
     void refreshSides($, [])
-    $.clock.every(FAMILY_MS, async () => {
-      if (!isFamilyRead || (await read($, sides)).length > 0) await refreshSides($, [])
+    $.clock.every(FAMILY_FAST_MS, async () => {
+      const linked = await read($, sides)
+      if (isFamilyRead && linked.length === 0) return
+      const pace = linked.some(side => moodOf(side.state) === 'working') ? FAMILY_FAST_MS : FAMILY_SLOW_MS
+      if (!isFamilyRead || (await $.clock.now()) - lastFamilyAt >= pace - 1_000) await refreshSides($, [])
     })
     const startedAt = await $.clock.now()
     await update($, clockNow, () => startedAt)
@@ -311,16 +332,16 @@ export const register: Register = (on, options) => {
     if (verb === 'theme' || verb === 'themes') {
       if (!name) {
         const current = (await read($, themeName)) ?? fromSettings
-        return { text: `Themes (▸ current):\n${themeList(current)}\n\n/progress theme <name> to switch, /progress theme default for the settings' theme.` }
+        // The panel draws each theme's colours; picking one there switches at once.
+        await $.ui.open({ id: THEME_PANE, title: 'Themes' })
+        return { text: `Themes (▸ current):\n${themeList(current)}\n\nThe Themes panel shows their colours. /progress theme <name> to switch, /progress theme default for the settings' theme.` }
       }
       if (name === 'default' || name === 'reset') {
-        await $.store.delete('theme')
-        await update($, themeName, () => null)
+        await setTheme($, null)
         return { text: `Theme back to the settings' theme: ${fromSettings}.` }
       }
       if (!isTheme(name)) return { text: `No theme "${name}". Themes:\n${themeList('')}` }
-      await $.store.set('theme', name)
-      await update($, themeName, () => name)
+      await setTheme($, name)
       return { text: `Theme: ${name}. Changing the theme in the settings replaces it.` }
     }
     if (verb === 'clear') {
@@ -493,9 +514,9 @@ export const register: Register = (on, options) => {
     const isStale = !isFinished && age >= STALE_TURNS
 
     const upNext = running && done + running < total ? 1 : 0
-    const bar = barCells(Math.max(1, e.props.bodyColumns), total, done, running, upNext)
     const clock = await read($, clockNow)
     const { elapsed, left } = timing(list, clock)
+    const took = isFinished ? listSpan(list) : null
     const look = doing ? ACTIVITY[doing.mode] : null
     const working = doing && look
       ? [`${look.label}${doing.mode === 'tool' && doing.tool ? ` ${doing.tool}` : ''}`, doing.since !== undefined ? formatSpan(Math.max(0, clock - doing.since)) : null]
@@ -504,8 +525,56 @@ export const register: Register = (on, options) => {
       : null
     const times = [
       !isFinished && elapsed !== null ? formatSpan(elapsed) : null,
-      !isFinished && left !== null ? `~${formatSpan(left)} left (rough)` : null,
+      !isFinished && left !== null ? `~${formatSpan(left)} left` : null,
     ].filter(Boolean)
+    const others = byUrgency(linked)
+    const doneColor = isFinished ? P.green : P.purple
+    const countColor = isFinished ? P.green : isStale ? P.comment : P.purple
+    const stepText = isFinished
+      ? `✓ all steps done${took ? ` in ${formatSpan(took)}` : ''}`
+      : current ? `▸ ${current.content}` : total > 0 ? `${total - done} pending` : null
+    const textBar = (cells: number) => {
+      const bar = barCells(cells, total, done, running, upNext)
+
+      return (
+        <Box flexDirection="row" flexShrink={0}>
+          <Text mono color={doneColor}>{'█'.repeat(bar.done)}</Text>
+          <Text mono color={P.pink}>{'▓'.repeat(bar.run)}</Text>
+          <Text mono color={P.orange}>{'▒'.repeat(bar.next)}</Text>
+          <Text mono color={P.comment}>{'░'.repeat(bar.rest)}</Text>
+        </Box>
+      )
+    }
+
+    // Short of rows or width, the band folds into one row: a small bar, the
+    // count, a dot for the main loop and one for the side sessions, then the step.
+    const rows = (total > 0 ? 2 : 0) + (working || linked.length > 0 ? 1 : 0) + (total === 0 && linked.length > 0 && !working ? 1 : 0)
+    const isCompact = (e.props.maxRows > 0 && e.props.maxRows < rows) || e.props.bodyColumns < COMPACT_COLUMNS
+    if (isCompact) {
+      const urgent = others[0]
+
+      return (
+        <Box flexDirection="row">
+          {total > 0 && textBar(Math.min(10, Math.max(4, Math.floor(e.props.bodyColumns / 6))))}
+          {total > 0 && (
+            <Box flexShrink={0}>
+              <Text bold tabular color={countColor}> {done}/{total} </Text>
+            </Box>
+          )}
+          {working && look && (
+            <Box flexShrink={0}>
+              <Text color={P[look.role]}>● </Text>
+            </Box>
+          )}
+          {urgent && (
+            <Box flexShrink={0}>
+              <Text color={sideColor(P, urgent.state)}>🦀{linked.length} </Text>
+            </Box>
+          )}
+          <Text wrap="truncate-end" dimColor={isFinished || isStale || !stepText}>{stepText ?? working ?? ''}</Text>
+        </Box>
+      )
+    }
 
     return (
       <Box flexDirection="column" rowGap={0}>
@@ -513,12 +582,7 @@ export const register: Register = (on, options) => {
           (Svg ? (
             <Svg alt={`${done} of ${total} steps done`} height={10} source={pillSvg(P, 10, total, done, running, upNext)} />
           ) : (
-            <Box flexDirection="row">
-              <Text mono color={P.purple}>{'█'.repeat(bar.done)}</Text>
-              <Text mono color={P.pink}>{'▓'.repeat(bar.run)}</Text>
-              <Text mono color={P.orange}>{'▒'.repeat(bar.next)}</Text>
-              <Text mono color={P.comment}>{'░'.repeat(bar.rest)}</Text>
-            </Box>
+            textBar(Math.max(1, e.props.bodyColumns))
           ))}
         {(working || linked.length > 0) && (
           <Box flexDirection="row" flexWrap="wrap" columnGap={2}>
@@ -528,7 +592,7 @@ export const register: Register = (on, options) => {
                 <Text wrap="truncate-end">{working}</Text>
               </Box>
             )}
-            {linked.map(side => (
+            {others.map(side => (
               <Box key={side.id} flexDirection="row">
                 <Text color={sideColor(P, side.state)}>● </Text>
                 <Text>{side.title ?? side.name} </Text>
@@ -539,13 +603,13 @@ export const register: Register = (on, options) => {
         )}
         {total > 0 ? (
           <Box flexDirection="row">
-            <Text bold tabular color={isFinished ? P.green : isStale ? P.comment : P.purple}>{done}/{total} </Text>
-            <Text wrap="truncate-end" dimColor={isFinished || isStale}>
-              {isFinished ? '✓ all steps done' : current ? `▸ ${current.content}` : `${total - done} pending`}
+            <Text bold tabular color={countColor}>{done}/{total} </Text>
+            <Text wrap="truncate-end" dimColor={isFinished || isStale} color={isFinished ? P.green : undefined}>
+              {stepText}
             </Text>
             {isStale ? (
               <Box flexShrink={0}>
-                <Text dimColor> · not updated for {age} turns</Text>
+                <Text dimColor> · not updated for {age} turns · /progress clear hides it</Text>
               </Box>
             ) : times.length > 0 && (
               <Box flexShrink={0}>
@@ -579,7 +643,7 @@ export const register: Register = (on, options) => {
       return allow ?? <Text dimColor>No side sessions from this chat yet.</Text>
     }
 
-    const cards = linked.map(side => ({
+    const cards = byUrgency(linked).map(side => ({
       side,
       card: {
         title: `${side.isParent ? '↑ ' : ''}${side.title ?? side.name}`,
@@ -624,6 +688,33 @@ export const register: Register = (on, options) => {
             {card.step && <Text dimColor wrap="truncate-end">   {card.step}</Text>}
           </Box>
         ))}
+      </Box>
+    )
+  })
+
+  // Each theme as a row of its colours, drawn with the settings' overrides on
+  // top; a press switches to it.
+  on('ui.render', { component: 'Pane', requestId: THEME_PANE }, async ($, e) => {
+    const { Box, Text, Button } = $.ui.resolve(e)
+    const picked = await read($, themeName)
+    const current = picked ?? fromSettings
+    const swatch = (P: Palette) =>
+      (['purple', 'pink', 'orange', 'green', 'comment'] as const).map(role => (
+        <Text key={role} mono color={P[role]}>██</Text>
+      ))
+
+    return (
+      <Box flexDirection="column">
+        {Object.keys(THEMES).map(name => (
+          <Button key={`theme-${name}`} plain onPress={() => void setTheme($, name)}>
+            {swatch(paletteOf(name, over))}
+            <Text> {name}</Text>
+            <Text dimColor>{name === current ? ' ◂ current' : ''}</Text>
+          </Button>
+        ))}
+        <Button key="theme-default" plain onPress={() => void setTheme($, null)}>
+          <Text dimColor>Settings' theme ({fromSettings}){picked === null ? ' ◂ current' : ''}</Text>
+        </Button>
       </Box>
     )
   })

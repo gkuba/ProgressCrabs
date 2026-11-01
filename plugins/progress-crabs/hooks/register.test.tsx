@@ -71,15 +71,18 @@ test('the band shows the running step and a rough time left', async ($, on) => {
       { content: 'One', status: 'in_progress' },
       { content: 'Two', status: 'pending' },
       { content: 'Three', status: 'pending' },
+      { content: 'Four', status: 'pending' },
     ],
   } as never)
   await clock.advance(10 * 60_000)
+  await $.tool.call({ tool: PLAN, advance: true } as never)
+  await clock.advance(8 * 60_000)
   await $.tool.call({ tool: PLAN, advance: true } as never)
   await clock.advance(4 * 60_000)
   await $.tool.call({ tool: PLAN, done: [] } as never)
 
   const ui = await $.ui.mount({ ...BAND, surface: 'desktop' })
-  expect((await ui.find({ type: 'Text', text: /left/ }))?.text).toBe(' · 4m · ~16m left (rough)')
+  expect((await ui.find({ type: 'Text', text: /left/ }))?.text).toBe(' · 4m · ~14m left')
   expect(await ui.find({ type: 'Svg' })).toBeDefined()
   await ui.unmount()
 })
@@ -163,6 +166,7 @@ test('/progress theme lists, switches and resets the colours', async ($, on) => 
   mock.store(on)
   on('tool.call', () => ({ result: {} }))
   on('command.register', () => ({ value: { command: 'progress' } }))
+  on('ui.open', () => ({ value: { isPlaced: true } }))
   on('session.start', (_, e) => ({ cwd: e.cwd }))
   await $.session.start({ cwd: '/', surface: 'desktop', isInteractive: true })
   await $.tool.call({ tool: PLAN, items: [{ content: 'One', status: 'in_progress' }] } as never)
