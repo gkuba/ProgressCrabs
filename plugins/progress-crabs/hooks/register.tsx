@@ -133,6 +133,14 @@ async function togglePane($: EngineInterface) {
   return true
 }
 
+// Shows the pane, or brings it to the front; never closes it. The band's
+// details button uses this: panes() also lists a pane that sits as a tab in
+// the sidebar out of view, so a toggle there would close it.
+async function showPane($: EngineInterface) {
+  await update($, isPaneDismissed, () => false)
+  await $.ui.open({ id: PANE, title: PANE_TITLE })
+}
+
 // Opens the pane the first time a side session appears, unless the person closed it.
 async function openPaneOnce($: EngineInterface) {
   if (!(await read($, isPaneDismissed))) await $.ui.open({ id: PANE, title: PANE_TITLE })
@@ -688,7 +696,7 @@ export const register: Register = (on, options) => {
             )}
             <Box flexShrink={0}>
               <Text> </Text>
-              <Button key="task-details" plain label="details ↗" onPress={() => void togglePane($).catch(() => undefined)} />
+              <Button key="task-details" plain label="details ↗" onPress={() => void showPane($).catch(() => undefined)} />
             </Box>
           </Box>
         ) : linked.length > 0 && !working ? (
