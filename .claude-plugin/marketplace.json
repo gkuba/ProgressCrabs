@@ -6,8 +6,8 @@
     {
       "name": "progress-crabs",
       "source": "./plugins/progress-crabs",
-      "description": "Mod: Dracula progress band above the prompt (task list, what Claude is doing, rough time left) and a Crab Tasks pane: a bar per step, side sessions as animated crabs.",
-      "version": "0.5.3",
+      "description": "Mod: Dracula progress band above the prompt (task list, what Claude is doing, rough time left) and a Crab Tasks pane: a bar per step, helpers and side sessions as animated crabs.",
+      "version": "0.6.0",
       "category": "mod"
     }
   ]

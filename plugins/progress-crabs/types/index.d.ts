@@ -9,6 +9,21 @@ export type Step = {
 export type Side = { name: string; id: string; state: string; title?: string; step?: string; since?: number; isListed?: boolean; isParent?: boolean }
 // What the main loop is doing during a turn, and when the turn began.
 export type Activity = { mode: 'thinking' | 'writing' | 'tool'; tool?: string; since: number }
+// A progress bar a helper reports from its shell; isOver: `done` or `fail` was reported.
+export type HelperBar = { name: string; done: number; total?: number; isPercent?: boolean; isOver?: boolean; isFailed?: boolean }
+// A subagent this chat started: what it is, what it is doing, and its latest bar.
+export type Helper = {
+  id: string
+  description: string
+  type: string
+  parentId?: string
+  status: 'working' | 'done' | 'failed'
+  tool?: string
+  calls: number
+  startedAt: number
+  finishedAt?: number
+  bar?: HelperBar
+}
 
 declare module 'claude-code' {
   interface PluginState {
@@ -17,6 +32,7 @@ declare module 'claude-code' {
       theme: string | null
       sides: Shaped<Side[]>
       activity: Shaped<Activity | null>
+      helpers: Shaped<Helper[]>
       now: number
       isHidden: boolean
       isPaneDismissed: boolean

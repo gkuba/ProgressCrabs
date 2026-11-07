@@ -1,12 +1,13 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register, RenderElement } from 'claude-code'
 
-import type { Activity, Side, Step } from '../types'
+import type { Activity, Helper, Side, Step } from '../types'
 import { CARD_H, MOOD, byUrgency, cardSvg, moodColor, moodOf } from './crabs'
 import { applyPlan, barCells, completeAll, formatSpan, listSpan, replay, stepEstimate, timing } from './plan'
 import type { PlanArgs } from './plan'
 import { idleSince, latestStep, parentOf, parseLinked, resultText, textOf } from './sides'
 import type { FamilyRow } from './sides'
+import { barFraction, barLabel, helperLine, isRunning, miniBarSvg, parseProgress, spawned, treeOrder, upsert } from './helpers'
 import { BAR_H, FLASH_MS, runsOf, stepBars, stepCells, stepSvg } from './tasks'
 import { DEFAULT_THEME, THEMES, isTheme, paletteOf } from './themes'
 import type { Overrides, Palette } from './themes'
@@ -18,6 +19,8 @@ const PLUGIN = 'progress-crabs'
 const steps = atom({ plugin: 'progress-crabs', key: 'steps' } as const, [], { shape: 'steps-2' })
 const sides = atom({ plugin: 'progress-crabs', key: 'sides' } as const, [], { shape: 'sides-2' })
 const activity = atom({ plugin: 'progress-crabs', key: 'activity' } as const, null as Activity | null, { shape: 'activity-1' })
+// The subagents this chat started, until the person's next prompt clears the finished ones.
+const helpers = atom({ plugin: 'progress-crabs', key: 'helpers' } as const, [] as Helper[], { shape: 'helpers-1' })
 const isHidden = atom({ plugin: 'progress-crabs', key: 'isHidden' } as const, false)
 // The theme `/progress theme` picked; null falls back to the settings' theme.
 const themeName = atom({ plugin: 'progress-crabs', key: 'theme' } as const, null as string | null)
@@ -290,6 +293,28 @@ async function drainFamily($: EngineInterface) {
   }
 }
 
+// Agent ids that are no helper of ours (a compaction's fork, a workflow's
+// agents): `$.agent.list()` names none of them, so they are asked about once.
+const notHelpers = new Set<string>()
+
+// Whether this agent id is a helper the mod follows. One met first through a
+// tool call (the mod reloaded mid-run) is added from the engine's list.
+async function knownHelper($: EngineInterface, id: string) {
+  if ((await read($, helpers)).some(h => h.id === id)) return true
+  if (notHelpers.has(id)) return false
+  const info = (await $.agent.list().catch(() => [])).find(a => a.id === id)
+  if (!info) {
+    notHelpers.add(id)
+    return false
+  }
+  const now = await $.clock.now()
+  await update($, helpers, list => (list.some(h => h.id === id) ? list : [...list, spawned(id, info.description, info.type, now, info.parentId)]))
+
+  return true
+}
+
+const helperMood = (h: Helper) => (h.status === 'working' ? 'working' : h.status === 'done' ? 'done' : 'idle') as 'working' | 'done' | 'idle'
+
 const USAGE = [
   '/progress            show or hide the band',
   '/progress show|hide  show or hide it',
@@ -345,7 +370,8 @@ export const register: Register = (on, options) => {
       const isBusy =
         (await read($, activity)) !== null ||
         (list.some(step => step.status === 'in_progress') && !(await read($, isInterrupted))) ||
-        linked.some(side => moodOf(side.state) === 'working')
+        linked.some(side => moodOf(side.state) === 'working') ||
+        (await read($, helpers)).some(isRunning)
       const isNewMinute = linked.length > 0 && Math.floor(now / 60_000) !== Math.floor(was / 60_000)
       if (isBusy || isNewMinute) await update($, clockNow, () => now)
     })
@@ -363,6 +389,7 @@ export const register: Register = (on, options) => {
       isRebuilt = false
       await update($, sides, () => [])
       await update($, activity, () => null)
+      await update($, helpers, () => [])
       resetFamily()
     }
 
@@ -460,6 +487,8 @@ export const register: Register = (on, options) => {
       if (!isFamilyRead) void refreshSides($, [])
       // A prompt typed mid-turn can take the band over while it queues; draw it again.
       $.ui.invalidate('ui.render')
+    } else if ((await read($, helpers)).some(h => h.id === e.agentId)) {
+      await update($, helpers, list => upsert(list, e.agentId as string, h => ({ ...h, status: 'working', finishedAt: undefined })))
     }
 
     return started
@@ -468,6 +497,7 @@ export const register: Register = (on, options) => {
   on('prompt.submit', async ($, e, next) => {
     const entered = await next(e)
     if (e.turnId) $.ui.invalidate('ui.render')
+    if (e.origin.kind === 'composer' && !('drop' in entered && entered.drop)) await update($, helpers, list => list.filter(isRunning))
 
     return entered
   })
@@ -498,7 +528,21 @@ export const register: Register = (on, options) => {
 
   on('tool.call', async ($, e, next) => {
     // The mod's own background calls are not Claude at work.
-    if (e.agentId || next.origin.plugin === PLUGIN) return next(e)
+    if (next.origin.plugin === PLUGIN) return next(e)
+    if (e.agentId) {
+      const id = e.agentId
+      if (!(await knownHelper($, id))) return next(e)
+      const tool = shortTool(e.tool)
+      const command = e.tool === 'Bash' ? String((e as { command?: unknown }).command ?? '') : ''
+      await update($, helpers, list =>
+        upsert(list, id, h => ({ ...h, status: 'working', finishedAt: undefined, tool, calls: h.calls + 1, bar: (command && parseProgress(command, h.bar)) || h.bar })),
+      )
+      try {
+        return await next(e)
+      } finally {
+        await update($, helpers, list => upsert(list, id, h => (h.tool === tool ? { ...h, tool: undefined } : h)))
+      }
+    }
     const tool = shortTool(e.tool)
     await setMode($, 'tool', tool, false)
     try {
@@ -515,10 +559,35 @@ export const register: Register = (on, options) => {
     if (!e.agentId && e.isAborted && (await read($, steps)).some(step => step.status === 'in_progress')) {
       await update($, isInterrupted, () => true)
     }
+    // A helper's loop ending: done, or stopped. Read from the input, like the flag above.
+    if (e.agentId && (await read($, helpers)).some(h => h.id === e.agentId)) {
+      const now = await $.clock.now()
+      await update($, helpers, list =>
+        upsert(list, e.agentId as string, h => ({ ...h, status: e.isAborted ? 'failed' : 'done', tool: undefined, finishedAt: now })),
+      )
+    }
     const done = await next(e)
     if (!e.agentId) await update($, activity, () => null)
 
     return done
+  })
+
+  // A helper starts: the Agent tool's description and type, and who spawned it.
+  on('agent.spawn', async ($, e, next) => {
+    const ran = await next(e)
+    if ('agentId' in ran && ran.agentId && !ran.deny) {
+      const id = ran.agentId
+      const now = await $.clock.now()
+      notHelpers.delete(id)
+      await update($, helpers, list =>
+        list.some(h => h.id === id)
+          ? upsert(list, id, h => ({ ...h, status: 'working', finishedAt: undefined }))
+          : [...list, spawned(id, e.description, e.subagentType, now, e.parentAgentId)],
+      )
+      await update($, clockNow, () => now)
+    }
+
+    return ran
   })
 
   // The app's "Linked sessions now" reminder carries each side session's state.
@@ -555,7 +624,8 @@ export const register: Register = (on, options) => {
     const linked = await read($, sides)
     // A turn the mod missed the start of (a reload mid-turn) still reads as working.
     const doing = e.props.isWorking ? ((await read($, activity)) ?? { mode: 'thinking' as const, since: undefined }) : null
-    if (e.props.hasSurvey || (await read($, isHidden)) || (list.length === 0 && linked.length === 0 && !doing)) {
+    const busyHelpers = (await read($, helpers)).filter(isRunning).length
+    if (e.props.hasSurvey || (await read($, isHidden)) || (list.length === 0 && linked.length === 0 && !doing && busyHelpers === 0)) {
       return next(e)
     }
 
@@ -621,7 +691,8 @@ export const register: Register = (on, options) => {
 
     // Short of rows or width, the band folds into one row: a small bar, the
     // count, a dot for the main loop and one for the side sessions, then the step.
-    const rows = (total > 0 ? 2 : 0) + (working || linked.length > 0 ? 1 : 0) + (total === 0 && linked.length > 0 && !working ? 1 : 0)
+    const helperTag = busyHelpers > 0 ? `🦀 ${busyHelpers} helper${busyHelpers === 1 ? '' : 's'}` : null
+    const rows = (total > 0 ? 2 : 0) + (working || linked.length > 0 || helperTag ? 1 : 0) + (total === 0 && linked.length > 0 && !working ? 1 : 0)
     const isCompact = (e.props.maxRows > 0 && e.props.maxRows < rows) || e.props.bodyColumns < COMPACT_COLUMNS
     if (isCompact) {
       const urgent = others[0]
@@ -637,6 +708,11 @@ export const register: Register = (on, options) => {
           {working && look && (
             <Box flexShrink={0}>
               <Text color={P[look.role]}>● </Text>
+            </Box>
+          )}
+          {busyHelpers > 0 && (
+            <Box flexShrink={0}>
+              <Text color={P.orange}>h{busyHelpers} </Text>
             </Box>
           )}
           {urgent && (
@@ -657,12 +733,19 @@ export const register: Register = (on, options) => {
           ) : (
             textBar(Math.max(1, e.props.bodyColumns))
           ))}
-        {(working || linked.length > 0) && (
+        {(working || linked.length > 0 || helperTag) && (
           <Box flexDirection="row" flexWrap="wrap" columnGap={2}>
             {working && look && (
               <Box flexDirection="row">
                 <Text color={P[look.role]}>● </Text>
                 <Text wrap="truncate-end">{working}</Text>
+              </Box>
+            )}
+            {helperTag && (
+              <Box flexDirection="row" flexShrink={0}>
+                <Button key="helpers-tag" plain onPress={() => void showPane($).catch(() => undefined)}>
+                  <Text color={P.orange}>{helperTag}</Text>
+                </Button>
               </Box>
             )}
             {others.map(side => (
@@ -716,6 +799,7 @@ export const register: Register = (on, options) => {
     const P = await paletteNow($, fromSettings, over)
     const list = await read($, steps)
     const linked = await read($, sides)
+    const crew = await read($, helpers)
     const now = Math.max(await read($, clockNow), await $.clock.now())
     const Svg = e.surface !== 'terminal' && 'Svg' in ui ? ui.Svg : undefined
     // A press is the person's own ask, so it may put the permission dialog up.
@@ -727,8 +811,8 @@ export const register: Register = (on, options) => {
         <Button key="allow" label="Allow session tools" onPress={() => void refreshSides($, [], true)} />
       </Box>
     ) : null
-    if (list.length === 0 && linked.length === 0) {
-      return allow ?? <Text dimColor>No task list or side sessions yet.</Text>
+    if (list.length === 0 && linked.length === 0 && crew.length === 0) {
+      return allow ?? <Text dimColor>No task list, helpers or side sessions yet.</Text>
     }
 
     const tasks = async () => {
@@ -801,7 +885,7 @@ export const register: Register = (on, options) => {
     const W = Math.max(240, Math.min(560, (e.props.bodyColumns || 40) * 8 - 8))
     const crabs = (
       <Box key="crabs" flexDirection="column" rowGap={Svg ? 1 : 0}>
-        {list.length > 0 && (linked.length > 0 || allow) && <Text bold>Side sessions</Text>}
+        {(list.length > 0 || crew.length > 0) && (linked.length > 0 || allow) && <Text bold>Side sessions</Text>}
         {allow}
         {Svg
           ? cards.map(({ side, card }) => (
@@ -828,9 +912,64 @@ export const register: Register = (on, options) => {
       </Box>
     )
 
+    // A card per helper, nested under the helper that started it, with its
+    // reported progress bar below when it has one.
+    const helperCards = (
+      <Box key="helpers" flexDirection="column" rowGap={Svg ? 1 : 0}>
+        <Text bold>Helpers</Text>
+        {treeOrder(crew).map(({ helper, depth }) => {
+          const mood = helperMood(helper)
+          const span = (helper.finishedAt ?? now) - helper.startedAt
+          const card = {
+            title: helper.description,
+            mood,
+            step: helperLine(helper),
+            elapsed: span > 1000 ? `${helper.status === 'working' ? '' : 'took '}${formatSpan(span)}` : undefined,
+          }
+          const w = Math.max(200, W - depth * 16)
+          const bar = helper.bar
+          const fill = bar?.isFailed ? P.red : P.green
+
+          return (
+            <Box key={`helper-${helper.id}`} flexDirection="column" paddingLeft={depth * 2}>
+              {Svg ? (
+                <Svg alt={`${card.title}: ${MOOD[mood].label}${card.step ? `, ${card.step}` : ''}`} width={w} height={CARD_H} source={cardSvg(P, w, card)} />
+              ) : (
+                <Box flexDirection="column">
+                  <Box flexDirection="row">
+                    <Text color={moodColor(P, mood)}>🦀 </Text>
+                    <Text wrap="truncate-end">{card.title}</Text>
+                    <Box flexShrink={0}>
+                      <Text dimColor> {[helper.status === 'failed' ? 'stopped' : MOOD[mood].label, card.elapsed].filter(Boolean).join(' · ')}</Text>
+                    </Box>
+                  </Box>
+                  {card.step && <Text dimColor wrap="truncate-end">   {card.step}</Text>}
+                </Box>
+              )}
+              {bar && (
+                <Box flexDirection="column">
+                  {Svg ? (
+                    <Svg alt={barLabel(bar)} width={w} height={4} source={miniBarSvg(P.comment, fill, w, barFraction(bar))} />
+                  ) : (
+                    <Box flexDirection="row">
+                      <Text>   </Text>
+                      <Text mono color={fill}>{'▰'.repeat(Math.round(barFraction(bar) * 12))}</Text>
+                      <Text mono color={P.comment}>{'▱'.repeat(12 - Math.round(barFraction(bar) * 12))}</Text>
+                    </Box>
+                  )}
+                  <Text dimColor wrap="truncate-end">{Svg ? '' : '   '}{barLabel(bar)}</Text>
+                </Box>
+              )}
+            </Box>
+          )
+        })}
+      </Box>
+    )
+
     return (
       <Box flexDirection="column" rowGap={1}>
         {list.length > 0 && (await tasks())}
+        {crew.length > 0 && helperCards}
         {crabs}
       </Box>
     )
